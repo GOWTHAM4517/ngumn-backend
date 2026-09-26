@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NGUMN Admin Dashboard</title>
+<style>
+  :root {
+    --bg: #07111F;
+    --card: #0D1C2E;
+    --border: #172D46;
+    --text: #FFFFFF;
+    --muted: #73859C;
+    --muted-2: #46586D;
+    --accent: #4DA3FF;
+    --green: #25D366;
+    --amber: #F5B942;
+    --red: #FF3B30;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 20px 60px; }
+  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+  h1 { font-size: 24px; font-weight: 800; letter-spacing: 1px; margin: 0; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .live-dot { width: 9px; height: 9px; border-radius: 5px; display: inline-block; margin-right: 6px; background: var(--muted-2); }
+  .live-dot.on { background: var(--green); }
+  .pill { font-size: 11px; color: var(--muted); display: flex; align-items: center; }
+
+  /* Login card */
+  #loginCard {
+    max-width: 380px; margin: 80px auto; background: var(--card); border: 1px solid var(--border);
+    border-radius: 18px; padding: 28px;
+  }
+  #loginCard h2 { margin-top: 0; font-size: 20px; }
+  #loginCard p { color: var(--muted); font-size: 12px; line-height: 1.5; }
+  label { display: block; font-size: 11px; color: var(--muted); font-weight: 700; margin: 14px 0 6px; letter-spacing: .5px; }
+  input, select {
+    width: 100%; background: #0A1826; border: 1px solid var(--border); border-radius: 10px;
+    padding: 11px 12px; color: var(--text); font-size: 14px; outline: none;
+  }
+  input:focus, select:focus { border-color: var(--accent); }
+  button {
+    cursor: pointer; border: none; border-radius: 10px; font-weight: 800; font-size: 13px;
+    padding: 11px 18px; background: var(--accent); color: #07111F;
+  }
+  button:disabled { opacity: .5; cursor: default; }
+  button.secondary { background: #1A2634; color: var(--text); border: 1px solid var(--border); }
+  button.danger { background: #B42318; color: #fff; }
+  .full { width: 100%; margin-top: 18px; }
+  .error { color: #FF6B6B; font-size: 12px; margin-top: 10px; }
+
+  /* Dashboard */
+  #dashboard { display: none; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 28px; }
+  .tile { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 16px; }
+  .tile .num { font-size: 26px; font-weight: 800; }
+  .tile .label { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .5px; margin-top: 4px; }
+
+  section { margin-bottom: 30px; }
+  section h2 { font-size: 15px; font-weight: 700; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .badge { background: #12304A; color: var(--accent); font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 8px; }
+
+  .card-row {
+    background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px;
+    margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .card-row .main { flex: 1; min-width: 200px; }
+  .card-row .title { font-size: 13px; font-weight: 700; }
+  .card-row .meta { color: var(--muted); font-size: 11px; margin-top: 3px; }
+  .dot { width: 9px; height: 9px; border-radius: 5px; display: inline-block; margin-right: 8px; }
+  .dot.low, .dot.verified { background: var(--green); }
+  .dot.medium, .dot.pending { background: var(--amber); }
+  .dot.high, .dot.rejected { background: var(--red); }
+  .tag { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 6px; margin-left: 6px; background: #1A2634; color: var(--muted); }
+  .tag.sim { background: #2A2210; color: var(--amber); }
+  .tag.community { background: #0F2A1C; color: var(--green); }
+  .votes { font-size: 11px; color: var(--muted); white-space: nowrap; }
+  .votes b { color: var(--text); }
+  .actions { display: flex; gap: 8px; }
+  .empty { color: #5A6B80; font-size: 12px; }
+
+  .disclaimer {
+    background: #241705; border: 1px solid #4A3410; color: var(--amber);
+    border-radius: 12px; padding: 12px 14px; font-size: 11px; line-height: 1.5; margin-bottom: 20px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- LOGIN -->
+  <div id="loginCard">
+    <h2>NGUMN Admin</h2>
+    <p>Sign in with any NGUMN account. Report verification requires an ADMIN-role account
+       (the seeded default is <code>admin@ngumn.local</code> / <code>admin123</code>) — other
+       accounts can view live data read-only.</p>
+    <label>Backend URL</label>
+    <input id="apiBase" value="" placeholder="http://localhost:8080" />
+    <label>Email</label>
+    <input id="email" type="email" placeholder="admin@ngumn.local" />
+    <label>Password</label>
+    <input id="password" type="password" placeholder="••••••••" />
+    <button class="full" id="loginBtn">Sign In</button>
+    <div class="error" id="loginError"></div>
+  </div>
+
+  <!-- DASHBOARD -->
+  <div id="dashboard">
+    <header>
+      <div>
+        <h1>NGUMN <span>Admin</span></h1>
+        <div class="sub" id="whoami"></div>
+      </div>
+      <div style="display:flex; align-items:center; gap:16px;">
+        <div class="pill"><span class="live-dot" id="liveDot"></span><span id="liveText">connecting…</span></div>
+        <button class="secondary" id="logoutBtn">Log Out</button>
+      </div>
+    </header>
+
+    <div class="disclaimer">
+      Prototype dashboard. Risk levels come from a rule-based engine (not ML). Emergency /
+      "Green Corridor" data is a software simulation only — no real traffic-signal or
+      emergency-service integration. Rows marked <b>simulated</b> come from backend Demo Mode.
+    </div>
+
+    <div class="tiles" id="tiles"></div>
+
+    <section>
+      <h2>Hazard Reports Awaiting Community Votes <span class="badge" id="pendingCount">0</span></h2>
+      <div class="sub" style="margin:-6px 0 12px">People nearby confirm or reject reports in the app - 3 "true" answers verify one. Admin buttons are an override only.</div>
+      <div id="reportsList"><div class="empty">Loading…</div></div>
+    </section>
+
+    <section>
+      <h2>Rule-breaker Reports (community verified) <span class="badge" id="complaintCount">0</span></h2>
+      <div id="complaintsList"><div class="empty">Loading…</div></div>
+    </section>
+
+    <section>
+      <h2>Traffic Violations <span class="badge" id="violationCount">0</span></h2>
+      <div class="sub" style="margin:-6px 0 12px">Detected automatically from live location (speed zones, one-way roads, no-entry zones), reported by Drive Guard, or confirmed by the community.</div>
+      <div id="violationsList"><div class="empty">Loading…</div></div>
+    </section>
+
+    <section>
+      <h2>Active Emergencies (Green Corridor — simulated) <span class="badge" id="emergencyCount">0</span></h2>
+      <div id="emergencyList"><div class="empty">Loading…</div></div>
+    </section>
+
+    <section>
+      <h2>Recent Alerts <span class="badge" id="alertCount">0</span></h2>
+      <div id="alertsList"><div class="empty">Loading…</div></div>
+    </section>
+  </div>
+</div>
+
+<script>
+(function () {
+  var state = { token: null, user: null, base: '' };
+  var els = {
+    loginCard: document.getElementById('loginCard'),
+    dashboard: document.getElementById('dashboard'),
+    apiBase: document.getElementById('apiBase'),
+    email: document.getElementById('email'),
+    password: document.getElementById('password'),
+    loginBtn: document.getElementById('loginBtn'),
+    loginError: document.getElementById('loginError'),
+    logoutBtn: document.getElementById('logoutBtn'),
+    whoami: document.getElementById('whoami'),
+    tiles: document.getElementById('tiles'),
+    reportsList: document.getElementById('reportsList'),
+    pendingCount: document.getElementById('pendingCount'),
+    emergencyList: document.getElementById('emergencyList'),
+    emergencyCount: document.getElementById('emergencyCount'),
+    alertsList: document.getElementById('alertsList'),
+    alertCount: document.getElementById('alertCount'),
+    complaintsList: document.getElementById('complaintsList'),
+    complaintCount: document.getElementById('complaintCount'),
+    violationsList: document.getElementById('violationsList'),
+    violationCount: document.getElementById('violationCount'),
+    liveDot: document.getElementById('liveDot'),
+    liveText: document.getElementById('liveText'),
+  };
+
+  // Default the backend URL field to wherever this page is being served
+  // from, so the common case (opening the dashboard on the same machine
+  // or LAN as the backend) needs no typing.
+  els.apiBase.value = window.location.origin;
+
+  function api(path, opts) {
+    opts = opts || {};
+    var headers = opts.headers || {};
+    if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+    if (opts.body) headers['Content-Type'] = 'application/json';
+    return fetch(state.base + path, {
+      method: opts.method || 'GET',
+      headers: headers,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    }).then(function (res) {
+      if (!res.ok) {
+        return res.text().then(function (t) {
+          throw new Error('HTTP ' + res.status + ': ' + t);
+        });
+      }
+      var ct = res.headers.get('content-type') || '';
+      return ct.indexOf('application/json') !== -1 ? res.json() : null;
+    });
+  }
+
+  function timeAgo(iso) {
+    if (!iso) return '';
+    var d = new Date(iso);
+    return d.toLocaleString();
+  }
+
+  // ---- Login ----
+  els.loginBtn.addEventListener('click', function () {
+    state.base = (els.apiBase.value || '').replace(/\/+$/, '');
+    els.loginError.textContent = '';
+    els.loginBtn.disabled = true;
+    fetch(state.base + '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: els.email.value, password: els.password.value }),
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error('Login failed (' + res.status + '). Check email/password and Backend URL.');
+        return res.json();
+      })
+      .then(function (user) {
+        state.token = user.token;
+        state.user = user;
+        localStorage.setItem('ngumn_admin_session', JSON.stringify({ base: state.base, token: user.token, user: user }));
+        showDashboard();
+      })
+      .catch(function (e) {
+        els.loginError.textContent = e.message || 'Login failed.';
+      })
+      .finally(function () {
+        els.loginBtn.disabled = false;
+      });
+  });
+
+  els.logoutBtn.addEventListener('click', function () {
+    localStorage.removeItem('ngumn_admin_session');
+    if (ws) { ws.close(); ws = null; }
+    state = { token: null, user: null, base: '' };
+    els.dashboard.style.display = 'none';
+    els.loginCard.style.display = 'block';
+  });
+
+  // Restore a previous session if present.
+  try {
+    var saved = JSON.parse(localStorage.getItem('ngumn_admin_session') || 'null');
+    if (saved && saved.token) {
+      state = saved;
+      showDashboard();
+    }
+  } catch (e) { /* ignore corrupt storage */ }
+
+  // ---- Dashboard ----
+  var ws = null;
+  var pollTimer = null;
+
+  function showDashboard() {
+    els.loginCard.style.display = 'none';
+    els.dashboard.style.display = 'block';
+    els.whoami.textContent = state.user.name + ' (' + state.user.role + ') · ' + state.base;
+    loadAll();
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(loadAll, 15000);
+    connectLive();
+  }
+
+  function connectLive() {
+    try {
+      var wsUrl = state.base.replace(/^http/, 'ws') + '/ws/live';
+      ws = new WebSocket(wsUrl);
+      ws.onopen = function () { setLive(true); };
+      ws.onclose = function () { setLive(false); setTimeout(function () { if (state.token) connectLive(); }, 3000); };
+      ws.onerror = function () {};
+      ws.onmessage = function () { loadAll(); };
+    } catch (e) { setLive(false); }
+  }
+
+  function setLive(on) {
+    els.liveDot.className = 'live-dot' + (on ? ' on' : '');
+    els.liveText.textContent = on ? 'live' : 'reconnecting…';
+  }
+
+  function loadAll() {
+    loadSummary();
+    loadReports();
+    loadEmergencies();
+    loadAlerts();
+    loadComplaints();
+    loadViolations();
+  }
+
+  function loadSummary() {
+    api('/api/admin/summary').then(function (s) {
+      els.tiles.innerHTML = [
+        tile(s.totalUsers, 'Users'),
+        tile(s.totalVehicles, 'Vehicles'),
+        tile(s.totalAlerts, 'Total Alerts'),
+        tile(s.pendingReports, 'Pending Reports'),
+        tile(s.activeEmergencies, 'Active Emergencies'),
+        tile(s.violations24h != null ? s.violations24h : 0, 'Violations (24h)'),
+        tile(s.pendingComplaints != null ? s.pendingComplaints : 0, 'Rule-breaker Reports Open'),
+        tile(s.connectedLiveClients, 'Live Clients'),
+      ].join('');
+    }).catch(function () {});
+  }
+
+  function tile(num, label) {
+    return '<div class="tile"><div class="num">' + num + '</div><div class="label">' + label + '</div></div>';
+  }
+
+  function loadReports() {
+    api('/api/reports').then(function (reports) {
+      var pending = reports.filter(function (r) { return r.status === 'PENDING'; });
+      els.pendingCount.textContent = pending.length;
+      if (pending.length === 0) {
+        els.reportsList.innerHTML = '<div class="empty">No pending reports.</div>';
+        return;
+      }
+      var canModerate = state.user.role === 'ADMIN';
+      els.reportsList.innerHTML = pending.map(function (r) {
+        return (
+          '<div class="card-row">' +
+            '<div class="main">' +
+              '<div class="title"><span class="dot pending"></span>' + escapeHtml(r.type) + ' — ' + escapeHtml(r.reporterName || 'Unknown') + '</div>' +
+              '<div class="meta">' + escapeHtml(r.description || 'No description') + ' · ' + timeAgo(r.timestamp) + '</div>' +
+            '</div>' +
+            votes(r) +
+            (canModerate
+              ? '<div class="actions">' +
+                  '<button data-verify="' + r.id + '">Verify</button>' +
+                  '<button class="danger" data-reject="' + r.id + '">Reject</button>' +
+                '</div>'
+              : '<div class="meta">Sign in as ADMIN to moderate</div>') +
+          '</div>'
+        );
+      }).join('');
+
+      els.reportsList.querySelectorAll('[data-verify]').forEach(function (btn) {
+        btn.addEventListener('click', function () { setStatus(btn.getAttribute('data-verify'), 'VERIFIED'); });
+      });
+      els.reportsList.querySelectorAll('[data-reject]').forEach(function (btn) {
+        btn.addEventListener('click', function () { setStatus(btn.getAttribute('data-reject'), 'REJECTED'); });
+      });
+    }).catch(function (e) {
+      els.reportsList.innerHTML = '<div class="empty">Could not load reports: ' + escapeHtml(e.message) + '</div>';
+    });
+  }
+
+  function setStatus(id, status) {
+    api('/api/reports/' + id + '/status', { method: 'PATCH', body: { status: status } })
+      .then(loadAll)
+      .catch(function (e) { alert('Failed to update report: ' + e.message); });
+  }
+
+  function loadEmergencies() {
+    api('/api/emergency/active').then(function (events) {
+      els.emergencyCount.textContent = events.length;
+      if (events.length === 0) {
+        els.emergencyList.innerHTML = '<div class="empty">No active emergencies.</div>';
+        return;
+      }
+      els.emergencyList.innerHTML = events.map(function (e) {
+        var code = e.vehicle && e.vehicle.vehicleCode ? e.vehicle.vehicleCode : (e.vehicleCode || 'Vehicle #' + (e.vehicleId || '?'));
+        return (
+          '<div class="card-row">' +
+            '<div class="main">' +
+              '<div class="title"><span class="dot high"></span>' + escapeHtml(String(code)) + '</div>' +
+              '<div class="meta">Started ' + timeAgo(e.startedAt) + '</div>' +
+            '</div>' +
+          '</div>'
+        );
+      }).join('');
+    }).catch(function (e) {
+      els.emergencyList.innerHTML = '<div class="empty">Could not load emergencies: ' + escapeHtml(e.message) + '</div>';
+    });
+  }
+
+  function loadAlerts() {
+    api('/api/alerts').then(function (alerts) {
+      var recent = alerts.slice(0, 15);
+      els.alertCount.textContent = alerts.length;
+      if (recent.length === 0) {
+        els.alertsList.innerHTML = '<div class="empty">No alerts yet.</div>';
+        return;
+      }
+      els.alertsList.innerHTML = recent.map(function (a) {
+        return (
+          '<div class="card-row">' +
+            '<div class="main">' +
+              '<div class="title"><span class="dot ' + a.riskLevel.toLowerCase() + '"></span>' + escapeHtml(a.type) + ' · ' + a.riskLevel + '</div>' +
+              '<div class="meta">' + escapeHtml(a.message) + ' · ' + timeAgo(a.createdAt) + '</div>' +
+            '</div>' +
+          '</div>'
+        );
+      }).join('');
+    }).catch(function (e) {
+      els.alertsList.innerHTML = '<div class="empty">Could not load alerts: ' + escapeHtml(e.message) + '</div>';
+    });
+  }
+
+  var VIOLATION_LABELS = {
+    OVERSPEED: 'Over-speeding', WRONG_WAY: 'Wrong way / wrong side', NO_ENTRY: 'No entry', OVERLOAD: 'Overloading',
+    SIGNAL_JUMP: 'Jumped red signal', NO_HELMET: 'No helmet', NO_SEATBELT: 'No seat belt', PHONE_USE: 'Phone while driving',
+    DANGEROUS_DRIVING: 'Rash driving', EMERGENCY_BLOCKING: 'Blocked emergency vehicle'
+  };
+  var SOURCE_LABELS = { MONITOR: 'auto-detected', DRIVE_GUARD: 'Drive Guard', COMMUNITY: 'community' };
+
+  function votes(item) {
+    var yes = item.confirmations || 0, no = item.denials || 0, need = item.confirmationsNeeded || 3;
+    return '<div class="votes">&#10003; <b>' + yes + '</b> &nbsp; &#10007; <b>' + no + '</b> &nbsp;of ' + need + ' needed</div>';
+  }
+
+  function loadComplaints() {
+    api('/api/complaints').then(function (list) {
+      var open = list.filter(function (c) { return c.status === 'PENDING'; });
+      els.complaintCount.textContent = open.length + ' open';
+      if (list.length === 0) {
+        els.complaintsList.innerHTML = '<div class="empty">No rule-breaker reports yet.</div>';
+        return;
+      }
+      els.complaintsList.innerHTML = list.slice(0, 15).map(function (c) {
+        var vehicle = c.accusedVehicleCode || c.plateNumber || 'vehicle not identified';
+        var dot = c.status === 'VERIFIED' ? 'verified' : c.status === 'REJECTED' ? 'rejected' : 'pending';
+        return (
+          '<div class="card-row">' +
+            '<div class="main">' +
+              '<div class="title"><span class="dot ' + dot + '"></span>' + escapeHtml(VIOLATION_LABELS[c.type] || c.type) + ' — ' + escapeHtml(vehicle) +
+                '<span class="tag">' + escapeHtml(c.status) + '</span></div>' +
+              '<div class="meta">' + escapeHtml(c.description || 'No details') + ' · by ' + escapeHtml(c.reporterName || 'a road user') +
+                (c.reporterTrust != null ? ' (trust ' + c.reporterTrust + ')' : '') + ' · ' + timeAgo(c.createdAt) + '</div>' +
+            '</div>' +
+            votes(c) +
+          '</div>'
+        );
+      }).join('');
+    }).catch(function (e) {
+      els.complaintsList.innerHTML = '<div class="empty">Could not load rule-breaker reports: ' + escapeHtml(e.message) + '</div>';
+    });
+  }
+
+  function loadViolations() {
+    if (state.user.role !== 'ADMIN') {
+      els.violationsList.innerHTML = '<div class="empty">Sign in with an ADMIN account to see the network\'s violations.</div>';
+      return;
+    }
+    api('/api/violations').then(function (list) {
+      els.violationCount.textContent = list.length;
+      if (list.length === 0) {
+        els.violationsList.innerHTML = '<div class="empty">No violations recorded yet. Start Demo Mode or share a phone\'s live location inside a rule zone.</div>';
+        return;
+      }
+      els.violationsList.innerHTML = list.slice(0, 20).map(function (v) {
+        var sev = v.type === 'OVERSPEED' || v.type === 'NO_ENTRY' || v.type === 'OVERLOAD' ? 'medium' : 'high';
+        return (
+          '<div class="card-row">' +
+            '<div class="main">' +
+              '<div class="title"><span class="dot ' + sev + '"></span>' + escapeHtml(VIOLATION_LABELS[v.type] || v.type) + ' — ' + escapeHtml(v.vehicleCode || '?') +
+                '<span class="tag' + (v.source === 'COMMUNITY' ? ' community' : '') + '">' + escapeHtml(SOURCE_LABELS[v.source] || v.source || '') + '</span>' +
+                (v.simulated ? '<span class="tag sim">simulated</span>' : '') + '</div>' +
+              '<div class="meta">' + escapeHtml(v.message) + ' · ' + escapeHtml(v.driverName || '') + ' · ' + timeAgo(v.createdAt) + '</div>' +
+            '</div>' +
+          '</div>'
+        );
+      }).join('');
+    }).catch(function (e) {
+      els.violationsList.innerHTML = '<div class="empty">Could not load violations: ' + escapeHtml(e.message) + '</div>';
+    });
+  }
+
+  function escapeHtml(str) {
+    return String(str == null ? '' : str).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+})();
+</script>
+</body>
+</html>

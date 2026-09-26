@@ -1,0 +1,56 @@
+package com.ngumn.backend.dto;
+
+import com.ngumn.backend.entity.ReportStatus;
+import com.ngumn.backend.entity.ReportType;
+import com.ngumn.backend.entity.RoadReport;
+import lombok.AllArgsConstructor;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+
+/**
+ * A hazard report as the app sees it, including community verification:
+ * confirmations / denials so far, how many confirmations it needs,
+ * the reporter's trust score, and myVote (true / false / null = not
+ * voted) for the person asking.
+ */
+@Data
+@AllArgsConstructor
+public class RoadReportResponse {
+    private Long id;
+    private ReportType type;
+    private String description;
+    private Double latitude;
+    private Double longitude;
+    private String imageUrl;
+    private ReportStatus status;
+    private Long reporterId;
+    private String reporterName;
+    private Integer reporterTrust;
+    private Integer confirmations;
+    private Integer denials;
+    private Integer confirmationsNeeded;
+    private Boolean myVote;
+    private LocalDateTime timestamp;
+    private LocalDateTime decidedAt;
+
+    public static RoadReportResponse from(RoadReport r) {
+        return from(r, null, null, null);
+    }
+
+    public static RoadReportResponse from(RoadReport r, Integer reporterTrust, Integer confirmationsNeeded, Boolean myVote) {
+        return new RoadReportResponse(
+                r.getId(), r.getType(), r.getDescription(), r.getLatitude(), r.getLongitude(),
+                r.getImageUrl(), r.getStatus(),
+                r.getReporter() != null ? r.getReporter().getId() : null,
+                r.getReporter() != null ? r.getReporter().getName() : null,
+                reporterTrust,
+                r.getConfirmations() != null ? r.getConfirmations() : 0,
+                r.getDenials() != null ? r.getDenials() : 0,
+                confirmationsNeeded,
+                myVote,
+                r.getTimestamp(),
+                r.getDecidedAt()
+        );
+    }
+}
