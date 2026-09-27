@@ -13,6 +13,11 @@ import java.time.LocalDateTime;
  * confirmations / denials so far, how many confirmations it needs,
  * the reporter's trust score, and myVote (true / false / null = not
  * voted) for the person asking.
+ *
+ * Also: whether it's still on the road (active) and when it clears by
+ * itself (expiresAt) or why it ended (endReason: EXPIRED, CLEARED,
+ * REJECTED), plus the one-tap feedback - how many found it helpful and
+ * said it's not there anymore, and whether the person asking did.
  */
 @Data
 @AllArgsConstructor
@@ -33,12 +38,25 @@ public class RoadReportResponse {
     private Boolean myVote;
     private LocalDateTime timestamp;
     private LocalDateTime decidedAt;
+    private Boolean active;
+    private LocalDateTime expiresAt;
+    private LocalDateTime clearedAt;
+    private String endReason;
+    private Integer helpfulCount;
+    private Boolean helpfulByMe;
+    private Integer goneCount;
+    private Boolean goneByMe;
 
     public static RoadReportResponse from(RoadReport r) {
-        return from(r, null, null, null);
+        return from(r, null, null, null, false, false, LocalDateTime.now());
     }
 
     public static RoadReportResponse from(RoadReport r, Integer reporterTrust, Integer confirmationsNeeded, Boolean myVote) {
+        return from(r, reporterTrust, confirmationsNeeded, myVote, false, false, LocalDateTime.now());
+    }
+
+    public static RoadReportResponse from(RoadReport r, Integer reporterTrust, Integer confirmationsNeeded, Boolean myVote,
+                                          boolean helpfulByMe, boolean goneByMe, LocalDateTime now) {
         return new RoadReportResponse(
                 r.getId(), r.getType(), r.getDescription(), r.getLatitude(), r.getLongitude(),
                 r.getImageUrl(), r.getStatus(),
@@ -50,7 +68,15 @@ public class RoadReportResponse {
                 confirmationsNeeded,
                 myVote,
                 r.getTimestamp(),
-                r.getDecidedAt()
+                r.getDecidedAt(),
+                r.isActiveAt(now),
+                r.effectiveExpiresAt(),
+                r.getClearedAt(),
+                r.endReasonAt(now),
+                r.getHelpfulCount() != null ? r.getHelpfulCount() : 0,
+                helpfulByMe,
+                r.getGoneCount() != null ? r.getGoneCount() : 0,
+                goneByMe
         );
     }
 }

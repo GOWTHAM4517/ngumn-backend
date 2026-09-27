@@ -6,9 +6,11 @@ import com.ngumn.backend.repository.RoadReportRepository;
 import com.ngumn.backend.repository.RoadSpeedLimitRepository;
 import com.ngumn.backend.repository.VehicleRepository;
 import com.ngumn.backend.util.GeoUtil;
+import com.ngumn.backend.util.ReportLifetime;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -97,12 +99,13 @@ public class RiskEngineService {
             }
         }
 
-        // --- 3. Nearby unresolved hazard reports ------------------------
-        long hazardCount = roadReportRepository.findByStatus(ReportStatus.PENDING).stream()
-                .filter(r -> GeoUtil.distanceMeters(vehicle.getCurrentLatitude(), vehicle.getCurrentLongitude(),
-                        r.getLatitude(), r.getLongitude()) <= nearbyRadiusMeters)
-                .count();
-        hazardCount += roadReportRepository.findByStatus(ReportStatus.VERIFIED).stream()
+        // --- 3. Nearby hazard reports that are still on the road ---------
+        // (Expired, cleared and rejected reports don't count - otherwise an
+        // old traffic jam would keep raising "hazard nearby" forever.)
+        LocalDateTime now = LocalDateTime.now();
+        long hazardCount = roadReportRepository
+                .findPossiblyActive(ReportStatus.REJECTED, now, now.minus(ReportLifetime.MAX)).stream()
+                .filter(r -> r.isActiveAt(now))
                 .filter(r -> GeoUtil.distanceMeters(vehicle.getCurrentLatitude(), vehicle.getCurrentLongitude(),
                         r.getLatitude(), r.getLongitude()) <= nearbyRadiusMeters)
                 .count();

@@ -75,11 +75,16 @@ public class ViolationComplaint {
 
     private LocalDateTime decidedAt;
 
+    /** People who marked the report helpful. Nullable so Hibernate can add it to an existing table. */
+    @Builder.Default
+    private Integer helpfulCount = 0;
+
     @PrePersist
     protected void onCreate() {
         if (this.createdAt == null) this.createdAt = LocalDateTime.now();
         if (this.status == null) this.status = ReportStatus.PENDING;
         if (this.confirmations == null) this.confirmations = 0;
         if (this.denials == null) this.denials = 0;
+        if (this.helpfulCount == null) this.helpfulCount = 0;
     }
 }

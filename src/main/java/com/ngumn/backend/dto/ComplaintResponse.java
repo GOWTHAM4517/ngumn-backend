@@ -11,7 +11,8 @@ import java.time.LocalDateTime;
 /**
  * A rule-breaker complaint as the app sees it. Like hazard reports it
  * carries the vote counts, confirmations needed, the reporter's trust and
- * the caller's own vote. accusedIsMe tells the owner of the reported
+ * the caller's own vote, and how many people found it helpful (helpfulByMe:
+ * whether the caller did). accusedIsMe tells the owner of the reported
  * vehicle that it's about them (they can't vote on it).
  */
 @Data
@@ -36,9 +37,16 @@ public class ComplaintResponse {
     private Boolean accusedIsMe;
     private LocalDateTime createdAt;
     private LocalDateTime decidedAt;
+    private Integer helpfulCount;
+    private Boolean helpfulByMe;
 
     public static ComplaintResponse from(ViolationComplaint c, Integer reporterTrust, Integer confirmationsNeeded,
                                          Boolean myVote, Long viewerId) {
+        return from(c, reporterTrust, confirmationsNeeded, myVote, viewerId, false);
+    }
+
+    public static ComplaintResponse from(ViolationComplaint c, Integer reporterTrust, Integer confirmationsNeeded,
+                                         Boolean myVote, Long viewerId, boolean helpfulByMe) {
         boolean accusedIsMe = viewerId != null && c.getAccusedVehicle() != null
                 && c.getAccusedVehicle().getOwner() != null
                 && viewerId.equals(c.getAccusedVehicle().getOwner().getId());
@@ -61,7 +69,9 @@ public class ComplaintResponse {
                 c.getConfirmations() != null ? c.getConfirmations() : 0,
                 c.getDenials() != null ? c.getDenials() : 0,
                 confirmationsNeeded, myVote, accusedIsMe,
-                c.getCreatedAt(), c.getDecidedAt()
+                c.getCreatedAt(), c.getDecidedAt(),
+                c.getHelpfulCount() != null ? c.getHelpfulCount() : 0,
+                helpfulByMe
         );
     }
 }

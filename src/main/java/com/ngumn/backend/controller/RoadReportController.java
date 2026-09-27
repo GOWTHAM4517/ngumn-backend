@@ -9,6 +9,7 @@ import com.ngumn.backend.entity.User;
 import com.ngumn.backend.exception.ApiException;
 import com.ngumn.backend.service.AuthService;
 import com.ngumn.backend.service.CommunityService;
+import com.ngumn.backend.service.ReportFeedbackService;
 import com.ngumn.backend.service.RoadReportService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
@@ -22,12 +23,14 @@ public class RoadReportController {
 
     private final RoadReportService roadReportService;
     private final CommunityService communityService;
+    private final ReportFeedbackService feedbackService;
     private final AuthService authService;
 
     public RoadReportController(RoadReportService roadReportService, CommunityService communityService,
-                                AuthService authService) {
+                                ReportFeedbackService feedbackService, AuthService authService) {
         this.roadReportService = roadReportService;
         this.communityService = communityService;
+        this.feedbackService = feedbackService;
         this.authService = authService;
     }
 
@@ -38,6 +41,7 @@ public class RoadReportController {
         return ResponseEntity.ok(roadReportService.submit(user, request));
     }
 
+    /** Reports still on the road (expired / cleared / rejected ones are left out). */
     @GetMapping
     public ResponseEntity<List<RoadReportResponse>> recent(@RequestHeader("Authorization") String authorization) {
         User user = authService.requireUser(authorization);
@@ -57,6 +61,38 @@ public class RoadReportController {
                                                      @Valid @RequestBody VoteRequest request) {
         User user = authService.requireUser(authorization);
         return ResponseEntity.ok(communityService.voteOnReport(user, id, request));
+    }
+
+    /** "Helpful" - one tap on someone else's report. */
+    @PostMapping("/{id}/helpful")
+    public ResponseEntity<RoadReportResponse> markHelpful(@RequestHeader("Authorization") String authorization,
+                                                          @PathVariable Long id) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(feedbackService.setReportHelpful(user, id, true));
+    }
+
+    /** Takes the "helpful" back. */
+    @DeleteMapping("/{id}/helpful")
+    public ResponseEntity<RoadReportResponse> unmarkHelpful(@RequestHeader("Authorization") String authorization,
+                                                            @PathVariable Long id) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(feedbackService.setReportHelpful(user, id, false));
+    }
+
+    /** "Not there anymore" - enough of these take the report down early. */
+    @PostMapping("/{id}/gone")
+    public ResponseEntity<RoadReportResponse> markGone(@RequestHeader("Authorization") String authorization,
+                                                       @PathVariable Long id) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(feedbackService.markGone(user, id));
+    }
+
+    /** The reporter takes their own report down ("it's cleared"). */
+    @PostMapping("/{id}/clear")
+    public ResponseEntity<RoadReportResponse> clear(@RequestHeader("Authorization") String authorization,
+                                                    @PathVariable Long id) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(feedbackService.clearOwn(user, id));
     }
 
     /** Admin moderation override - normally the community verifies reports. */

@@ -5,6 +5,7 @@ import com.ngumn.backend.entity.*;
 import com.ngumn.backend.exception.ApiException;
 import com.ngumn.backend.repository.*;
 import com.ngumn.backend.util.GeoUtil;
+import com.ngumn.backend.util.ReportLifetime;
 import com.ngumn.backend.websocket.NgumnWebSocketHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -59,6 +60,7 @@ public class CommunityService {
     private final RoadReportRepository roadReportRepository;
     private final ViolationComplaintRepository complaintRepository;
     private final CommunityVoteRepository voteRepository;
+    private final ReportFeedbackRepository feedbackRepository;
     private final UserRepository userRepository;
     private final VehicleRepository vehicleRepository;
     private final RewardService rewardService;
@@ -69,6 +71,7 @@ public class CommunityService {
     public CommunityService(RoadReportRepository roadReportRepository,
                             ViolationComplaintRepository complaintRepository,
                             CommunityVoteRepository voteRepository,
+                            ReportFeedbackRepository feedbackRepository,
                             UserRepository userRepository,
                             VehicleRepository vehicleRepository,
                             RewardService rewardService,
@@ -78,6 +81,7 @@ public class CommunityService {
         this.roadReportRepository = roadReportRepository;
         this.complaintRepository = complaintRepository;
         this.voteRepository = voteRepository;
+        this.feedbackRepository = feedbackRepository;
         this.userRepository = userRepository;
         this.vehicleRepository = vehicleRepository;
         this.rewardService = rewardService;
@@ -90,10 +94,17 @@ public class CommunityService {
     // Hazard reports
     // ------------------------------------------------------------------
 
-    /** Reports as the viewer sees them: vote counts, confirmations needed, reporter trust, their own vote. */
+    /**
+     * Reports as the viewer sees them: vote counts, confirmations needed,
+     * reporter trust, their own vote, whether each is still on the road,
+     * and the viewer's own "helpful" / "not there anymore" taps.
+     */
     public List<RoadReportResponse> describeReports(User viewer, List<RoadReport> reports) {
         Map<Long, Boolean> myVotes = votesBy(viewer, VoteTarget.REPORT);
+        Set<Long> myHelpful = feedbackBy(viewer, VoteTarget.REPORT, FeedbackKind.HELPFUL);
+        Set<Long> myGone = feedbackBy(viewer, VoteTarget.REPORT, FeedbackKind.GONE);
         Map<Long, TrustResponse> trustCache = new HashMap<>();
+        LocalDateTime now = LocalDateTime.now();
         List<RoadReportResponse> out = new ArrayList<>();
         for (RoadReport r : reports) {
             TrustResponse trust = r.getReporter() != null
@@ -102,7 +113,10 @@ public class CommunityService {
             out.add(RoadReportResponse.from(r,
                     trust != null ? trust.getTrustScore() : null,
                     trust != null ? trust.getConfirmationsNeeded() : CONFIRMATIONS_NEEDED,
-                    myVotes.get(r.getId())));
+                    myVotes.get(r.getId()),
+                    myHelpful.contains(r.getId()),
+                    myGone.contains(r.getId()),
+                    now));
         }
         return out;
     }
@@ -117,10 +131,19 @@ public class CommunityService {
                 .orElseThrow(() -> ApiException.notFound("Report not found"));
         checkVote(voter, VoteTarget.REPORT, report.getId(), report.getReporter(), report.getStatus(),
                 report.getLatitude(), report.getLongitude(), request, null);
+        LocalDateTime now = LocalDateTime.now();
+        if (!report.isActiveAt(now)) {
+            throw ApiException.badRequest("This report has already cleared - thanks for checking!");
+        }
 
         saveVote(voter, VoteTarget.REPORT, report.getId(), request.getAgree());
         report.setConfirmations(countVotes(VoteTarget.REPORT, report.getId(), true));
         report.setDenials(countVotes(VoteTarget.REPORT, report.getId(), false));
+        if (Boolean.TRUE.equals(request.getAgree())) {
+            // "Still there" restarts the clock, so hazards people keep seeing stay up.
+            LocalDateTime renewed = now.plus(ReportLifetime.of(report.getType(), report.getDescription()));
+            if (renewed.isAfter(report.effectiveExpiresAt())) report.setExpiresAt(renewed);
+        }
         report = roadReportRepository.save(report);
 
         Long reporterId = report.getReporter() != null ? report.getReporter().getId() : null;
@@ -195,6 +218,7 @@ public class CommunityService {
 
     public List<ComplaintResponse> describeComplaints(User viewer, List<ViolationComplaint> complaints) {
         Map<Long, Boolean> myVotes = votesBy(viewer, VoteTarget.COMPLAINT);
+        Set<Long> myHelpful = feedbackBy(viewer, VoteTarget.COMPLAINT, FeedbackKind.HELPFUL);
         Map<Long, TrustResponse> trustCache = new HashMap<>();
         List<ComplaintResponse> out = new ArrayList<>();
         for (ViolationComplaint c : complaints) {
@@ -205,7 +229,8 @@ public class CommunityService {
                     trust != null ? trust.getTrustScore() : null,
                     trust != null ? trust.getConfirmationsNeeded() : CONFIRMATIONS_NEEDED,
                     myVotes.get(c.getId()),
-                    viewer != null ? viewer.getId() : null));
+                    viewer != null ? viewer.getId() : null,
+                    myHelpful.contains(c.getId())));
         }
         return out;
     }
@@ -311,7 +336,9 @@ public class CommunityService {
     public void demoVote(List<User> demoVoters, Random random) {
         if (demoVoters.isEmpty()) return;
         LocalDateTime since = LocalDateTime.now().minusHours(6);
-        List<RoadReport> reports = roadReportRepository.findByStatusAndTimestampAfter(ReportStatus.PENDING, since);
+        LocalDateTime now = LocalDateTime.now();
+        List<RoadReport> reports = roadReportRepository.findByStatusAndTimestampAfter(ReportStatus.PENDING, since)
+                .stream().filter(r -> r.isActiveAt(now)).toList();
         List<ViolationComplaint> complaints = complaintRepository.findByStatusAndCreatedAtAfter(ReportStatus.PENDING, since);
         int total = reports.size() + complaints.size();
         if (total == 0) return;
@@ -397,6 +424,15 @@ public class CommunityService {
     /** Re-reads the user first so points are added to their latest total. */
     private void grant(Long userId, int points, String reason, RoadReport report) {
         userRepository.findById(userId).ifPresent(u -> rewardService.grant(u, points, reason, report));
+    }
+
+    private Set<Long> feedbackBy(User viewer, VoteTarget target, FeedbackKind kind) {
+        Set<Long> ids = new HashSet<>();
+        if (viewer == null) return ids;
+        for (ReportFeedback f : feedbackRepository.findByUserIdAndTargetTypeAndKind(viewer.getId(), target, kind)) {
+            ids.add(f.getTargetId());
+        }
+        return ids;
     }
 
     private Map<Long, Boolean> votesBy(User viewer, VoteTarget target) {

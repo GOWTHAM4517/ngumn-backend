@@ -7,7 +7,12 @@ import com.ngumn.backend.entity.RoadReport;
 import com.ngumn.backend.entity.User;
 import com.ngumn.backend.exception.ApiException;
 import com.ngumn.backend.repository.RoadReportRepository;
+import com.ngumn.backend.util.ReportLifetime;
 import com.ngumn.backend.websocket.NgumnWebSocketHandler;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -18,10 +23,16 @@ import java.util.Map;
  * Hazard reports. Reports are verified by the community (people nearby
  * answer "is this true?" - see CommunityService); the admin status change
  * below is kept as a moderation override.
+ *
+ * Reports don't stay up forever: each clears by itself after a lifetime
+ * that depends on what it is (ReportLifetime - an hour for a traffic jam,
+ * a week for a pothole), and can be taken down early (ReportFeedbackService).
+ * The public list only returns reports that are still on the road.
  */
 @Service
 public class RoadReportService {
 
+    private static final Logger log = LoggerFactory.getLogger(RoadReportService.class);
     private static final int VERIFIED_REPORT_POINTS = CommunityService.REPORTER_POINTS;
 
     private final RoadReportRepository roadReportRepository;
@@ -54,8 +65,37 @@ public class RoadReportService {
         return communityService.describeReport(reporter, report);
     }
 
+    /** Reports still on the road right now, newest first - expired, cleared and rejected ones drop off. */
     public List<RoadReportResponse> recent(User viewer) {
-        return communityService.describeReports(viewer, roadReportRepository.findTop100ByOrderByTimestampDesc());
+        return communityService.describeReports(viewer, activeReports(LocalDateTime.now(), 200));
+    }
+
+    /** Active reports (see RoadReport.isActiveAt), newest first, at most `limit`. */
+    public List<RoadReport> activeReports(LocalDateTime now, int limit) {
+        return roadReportRepository
+                .findPossiblyActive(ReportStatus.REJECTED, now, now.minus(ReportLifetime.MAX))
+                .stream()
+                .filter(r -> r.isActiveAt(now))
+                .limit(limit)
+                .toList();
+    }
+
+    /**
+     * Reports made before expiry times were stored get one now, worked out
+     * from when they were made - so every query can rely on expiresAt.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void backfillExpiry() {
+        try {
+            List<RoadReport> missing = roadReportRepository.findByExpiresAtIsNull();
+            if (missing.isEmpty()) return;
+            for (RoadReport r : missing) r.setExpiresAt(r.effectiveExpiresAt());
+            roadReportRepository.saveAll(missing);
+            log.info("Set expiry times on {} older road reports", missing.size());
+        } catch (RuntimeException e) {
+            // Not fatal: RoadReport.effectiveExpiresAt covers rows without one.
+            log.warn("Couldn't backfill report expiry times: {}", e.getMessage());
+        }
     }
 
     public List<RoadReportResponse> myReports(User viewer) {

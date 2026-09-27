@@ -6,6 +6,7 @@ import com.ngumn.backend.dto.VoteRequest;
 import com.ngumn.backend.entity.User;
 import com.ngumn.backend.service.AuthService;
 import com.ngumn.backend.service.CommunityService;
+import com.ngumn.backend.service.ReportFeedbackService;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -21,10 +22,13 @@ import java.util.List;
 public class ComplaintController {
 
     private final CommunityService communityService;
+    private final ReportFeedbackService feedbackService;
     private final AuthService authService;
 
-    public ComplaintController(CommunityService communityService, AuthService authService) {
+    public ComplaintController(CommunityService communityService, ReportFeedbackService feedbackService,
+                               AuthService authService) {
         this.communityService = communityService;
+        this.feedbackService = feedbackService;
         this.authService = authService;
     }
 
@@ -53,5 +57,20 @@ public class ComplaintController {
                                                   @Valid @RequestBody VoteRequest request) {
         User user = authService.requireUser(authorization);
         return ResponseEntity.ok(communityService.voteOnComplaint(user, id, request));
+    }
+
+    /** "Helpful" - one tap on someone else's rule-breaker report. */
+    @PostMapping("/{id}/helpful")
+    public ResponseEntity<ComplaintResponse> markHelpful(@RequestHeader("Authorization") String authorization,
+                                                         @PathVariable Long id) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(feedbackService.setComplaintHelpful(user, id, true));
+    }
+
+    @DeleteMapping("/{id}/helpful")
+    public ResponseEntity<ComplaintResponse> unmarkHelpful(@RequestHeader("Authorization") String authorization,
+                                                           @PathVariable Long id) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(feedbackService.setComplaintHelpful(user, id, false));
     }
 }
