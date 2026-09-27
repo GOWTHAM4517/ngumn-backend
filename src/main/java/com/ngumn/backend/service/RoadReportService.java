@@ -7,6 +7,7 @@ import com.ngumn.backend.entity.RoadReport;
 import com.ngumn.backend.entity.User;
 import com.ngumn.backend.exception.ApiException;
 import com.ngumn.backend.repository.RoadReportRepository;
+import com.ngumn.backend.util.GeoUtil;
 import com.ngumn.backend.util.ReportLifetime;
 import com.ngumn.backend.websocket.NgumnWebSocketHandler;
 import org.slf4j.Logger;
@@ -39,13 +40,16 @@ public class RoadReportService {
     private final RewardService rewardService;
     private final CommunityService communityService;
     private final NgumnWebSocketHandler webSocketHandler;
+    private final HazardAheadService hazardAheadService;
 
     public RoadReportService(RoadReportRepository roadReportRepository, RewardService rewardService,
-                              CommunityService communityService, NgumnWebSocketHandler webSocketHandler) {
+                              CommunityService communityService, NgumnWebSocketHandler webSocketHandler,
+                              HazardAheadService hazardAheadService) {
         this.roadReportRepository = roadReportRepository;
         this.rewardService = rewardService;
         this.communityService = communityService;
         this.webSocketHandler = webSocketHandler;
+        this.hazardAheadService = hazardAheadService;
     }
 
     public RoadReportResponse submit(User reporter, RoadReportRequest request) {
@@ -62,12 +66,32 @@ public class RoadReportService {
                 .build();
         report = roadReportRepository.save(report);
         webSocketHandler.broadcast("ROAD_REPORT", Map.of("id", report.getId()));
+        // Only the people heading into it are warned - not everyone.
+        hazardAheadService.warnAboutNewReport(report);
         return communityService.describeReport(reporter, report);
     }
 
     /** Reports still on the road right now, newest first - expired, cleared and rejected ones drop off. */
     public List<RoadReportResponse> recent(User viewer) {
-        return communityService.describeReports(viewer, activeReports(LocalDateTime.now(), 200));
+        return recent(viewer, null, null, null);
+    }
+
+    /**
+     * Reports still on the road, newest first. With lat / lng, only those
+     * within radiusMeters (default 10 km, at most 20 km) of that point - the
+     * app asks only for the area around the person, so a pothole in
+     * another city never reaches them.
+     */
+    public List<RoadReportResponse> recent(User viewer, Double lat, Double lng, Double radiusMeters) {
+        List<RoadReport> active = activeReports(LocalDateTime.now(), 500);
+        if (lat != null && lng != null) {
+            double radius = VehicleService.clampRadius(radiusMeters, 10_000);
+            active = active.stream()
+                    .filter(r -> r.getLatitude() != null && r.getLongitude() != null
+                            && GeoUtil.distanceMeters(lat, lng, r.getLatitude(), r.getLongitude()) <= radius)
+                    .toList();
+        }
+        return communityService.describeReports(viewer, active.stream().limit(200).toList());
     }
 
     /** Active reports (see RoadReport.isActiveAt), newest first, at most `limit`. */
@@ -116,7 +140,7 @@ public class RoadReportService {
 
         if (newStatus == ReportStatus.VERIFIED && previous != ReportStatus.VERIFIED) {
             rewardService.grant(report.getReporter(), VERIFIED_REPORT_POINTS,
-                    "Road report verified (#" + report.getId() + ")", report);
+                    "Your " + CommunityService.reportWhat(report) + " was verified", report);
         }
 
         webSocketHandler.broadcast("ROAD_REPORT", Map.of("id", report.getId()));

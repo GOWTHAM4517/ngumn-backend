@@ -5,11 +5,14 @@ import com.ngumn.backend.entity.*;
 import com.ngumn.backend.exception.ApiException;
 import com.ngumn.backend.repository.EmergencyEventRepository;
 import com.ngumn.backend.repository.VehicleRepository;
+import com.ngumn.backend.util.GeoUtil;
+import com.ngumn.backend.util.VehicleLabels;
 import com.ngumn.backend.websocket.NgumnWebSocketHandler;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 
 /**
  * "Green Corridor" priority-route module.
@@ -55,14 +58,22 @@ public class EmergencyService {
                 .build();
         event = emergencyEventRepository.save(event);
 
-        webSocketHandler.broadcast("EMERGENCY_STARTED", event);
+        webSocketHandler.broadcast("EMERGENCY_STARTED", Map.of("id", event.getId()));
 
-        // Simulated Green Corridor: notify every currently-nearby vehicle.
-        if (vehicle.getCurrentLatitude() != null) {
+        // Simulated Green Corridor: tell everyone near it (with a live
+        // position) where it is, in words - "An emergency vehicle is 400 m
+        // behind you - please give way."
+        if (vehicle.getCurrentLatitude() != null && vehicle.getCurrentLongitude() != null) {
+            double lat = vehicle.getCurrentLatitude(), lng = vehicle.getCurrentLongitude();
+            Double heading = vehicle.getSpeedKmh() != null && vehicle.getSpeedKmh() >= 8 ? vehicle.getDirectionDegrees() : null;
+            String who = VehicleLabels.capitalise(emergencyWho(vehicle));
             List<Vehicle> nearby = riskEngineService.findNearbyVehicles(vehicle, 1000);
             for (Vehicle v : nearby) {
+                double d = GeoUtil.distanceMeters(v.getCurrentLatitude(), v.getCurrentLongitude(), lat, lng);
+                String where = NearbyDangerService.describe(v, lat, lng, d, heading);
+                String advice = v.effectiveTravelMode().onFoot() ? "keep clear of the road" : "please give way";
                 alertService.raise(v, v.getOwner(), AlertType.EMERGENCY_VEHICLE, RiskLevel.HIGH,
-                        "Emergency vehicle " + vehicle.getVehicleCode() + " approaching - please give way.",
+                        who + " is " + where + " - " + advice + ".",
                         v.getCurrentLatitude(), v.getCurrentLongitude());
             }
         }
@@ -81,8 +92,17 @@ public class EmergencyService {
         vehicle.setEmergencyStatus(false);
         vehicleRepository.save(vehicle);
 
-        webSocketHandler.broadcast("EMERGENCY_ENDED", event);
+        webSocketHandler.broadcast("EMERGENCY_ENDED", Map.of("id", event.getId()));
         return event;
+    }
+
+    /** "an emergency vehicle", or "a car on an emergency" for someone rushing in their own vehicle. */
+    private static String emergencyWho(Vehicle vehicle) {
+        String plate = VehicleLabels.cleanPlate(vehicle.getPlateNumber());
+        TravelMode mode = vehicle.effectiveTravelMode();
+        String base = mode == TravelMode.EMERGENCY ? "an emergency vehicle"
+                : mode.onFoot() ? "someone on an emergency" : mode.withArticle() + " on an emergency";
+        return plate != null && !mode.onFoot() ? base + " (" + plate + ")" : base;
     }
 
     public List<EmergencyEvent> active() {

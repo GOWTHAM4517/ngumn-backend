@@ -39,10 +39,14 @@ public class ComplaintController {
         return ResponseEntity.ok(communityService.fileComplaint(user, request));
     }
 
+    /** The latest rule-breaker reports - with lat / lng, only those within radiusMeters of that point. */
     @GetMapping
-    public ResponseEntity<List<ComplaintResponse>> recent(@RequestHeader("Authorization") String authorization) {
+    public ResponseEntity<List<ComplaintResponse>> recent(@RequestHeader("Authorization") String authorization,
+                                                          @RequestParam(required = false) Double lat,
+                                                          @RequestParam(required = false) Double lng,
+                                                          @RequestParam(required = false) Double radiusMeters) {
         User user = authService.requireUser(authorization);
-        return ResponseEntity.ok(communityService.recentComplaints(user));
+        return ResponseEntity.ok(communityService.recentComplaints(user, lat, lng, radiusMeters));
     }
 
     @GetMapping("/mine")

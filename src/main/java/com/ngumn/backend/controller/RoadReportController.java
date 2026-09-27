@@ -41,11 +41,17 @@ public class RoadReportController {
         return ResponseEntity.ok(roadReportService.submit(user, request));
     }
 
-    /** Reports still on the road (expired / cleared / rejected ones are left out). */
+    /**
+     * Reports still on the road (expired / cleared / rejected ones are left
+     * out). With lat / lng, only those within radiusMeters of that point.
+     */
     @GetMapping
-    public ResponseEntity<List<RoadReportResponse>> recent(@RequestHeader("Authorization") String authorization) {
+    public ResponseEntity<List<RoadReportResponse>> recent(@RequestHeader("Authorization") String authorization,
+                                                           @RequestParam(required = false) Double lat,
+                                                           @RequestParam(required = false) Double lng,
+                                                           @RequestParam(required = false) Double radiusMeters) {
         User user = authService.requireUser(authorization);
-        return ResponseEntity.ok(roadReportService.recent(user));
+        return ResponseEntity.ok(roadReportService.recent(user, lat, lng, radiusMeters));
     }
 
     @GetMapping("/mine")

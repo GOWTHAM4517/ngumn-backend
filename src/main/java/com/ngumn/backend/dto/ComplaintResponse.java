@@ -3,6 +3,7 @@ package com.ngumn.backend.dto;
 import com.ngumn.backend.entity.ReportStatus;
 import com.ngumn.backend.entity.ViolationComplaint;
 import com.ngumn.backend.entity.ViolationType;
+import com.ngumn.backend.util.VehicleLabels;
 import lombok.AllArgsConstructor;
 import lombok.Data;
 
@@ -39,6 +40,8 @@ public class ComplaintResponse {
     private LocalDateTime decidedAt;
     private Integer helpfulCount;
     private Boolean helpfulByMe;
+    /** The reported NGUMN vehicle in words - "A car (AP 16 BX 2231)" - for display instead of its internal code. */
+    private String accusedVehicleLabel;
 
     public static ComplaintResponse from(ViolationComplaint c, Integer reporterTrust, Integer confirmationsNeeded,
                                          Boolean myVote, Long viewerId) {
@@ -71,7 +74,8 @@ public class ComplaintResponse {
                 confirmationsNeeded, myVote, accusedIsMe,
                 c.getCreatedAt(), c.getDecidedAt(),
                 c.getHelpfulCount() != null ? c.getHelpfulCount() : 0,
-                helpfulByMe
+                helpfulByMe,
+                c.getAccusedVehicle() != null ? VehicleLabels.describeCapitalised(c.getAccusedVehicle()) : null
         );
     }
 }

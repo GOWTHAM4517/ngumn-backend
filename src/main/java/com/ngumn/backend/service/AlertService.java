@@ -4,11 +4,13 @@ import com.ngumn.backend.dto.AlertResponse;
 import com.ngumn.backend.entity.Alert;
 import com.ngumn.backend.entity.AlertType;
 import com.ngumn.backend.entity.RiskLevel;
+import com.ngumn.backend.entity.Role;
 import com.ngumn.backend.entity.User;
 import com.ngumn.backend.entity.Vehicle;
 import com.ngumn.backend.event.AlertRaisedEvent;
 import com.ngumn.backend.exception.ApiException;
 import com.ngumn.backend.repository.AlertRepository;
+import com.ngumn.backend.util.GeoUtil;
 import com.ngumn.backend.websocket.NgumnWebSocketHandler;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -57,12 +59,38 @@ public class AlertService {
     }
 
     public List<AlertResponse> recent() {
-        return alertRepository.findTop100ByOrderByCreatedAtDesc().stream()
-                .map(AlertResponse::from).collect(Collectors.toList());
+        return recent(null, null, null);
+    }
+
+    /** The latest alerts - with lat / lng, only ones raised within radiusMeters of that point. */
+    public List<AlertResponse> recent(Double lat, Double lng, Double radiusMeters) {
+        var latest = alertRepository.findTop100ByOrderByCreatedAtDesc().stream();
+        if (lat != null && lng != null) {
+            double radius = VehicleService.clampRadius(radiusMeters, 10_000);
+            latest = latest.filter(a -> a.getLatitude() != null && a.getLongitude() != null
+                    && GeoUtil.distanceMeters(lat, lng, a.getLatitude(), a.getLongitude()) <= radius);
+        }
+        return latest.map(AlertResponse::from).collect(Collectors.toList());
     }
 
     public List<AlertResponse> forVehicle(Long vehicleId) {
         return alertRepository.findByVehicleIdOrderByCreatedAtDesc(vehicleId).stream()
+                .map(AlertResponse::from).collect(Collectors.toList());
+    }
+
+    /** A vehicle's alerts - only the ones meant for `viewer` (admins see all). */
+    public List<AlertResponse> forVehicle(User viewer, Long vehicleId) {
+        return alertRepository.findByVehicleIdOrderByCreatedAtDesc(vehicleId).stream()
+                .filter(a -> isFor(a, viewer))
+                .map(AlertResponse::from).collect(Collectors.toList());
+    }
+
+    /**
+     * Everything raised for this person, newest first - whichever of their
+     * vehicles it came through (older accounts may have more than one).
+     */
+    public List<AlertResponse> forUser(User user) {
+        return alertRepository.findTop100ByUserIdOrderByCreatedAtDesc(user.getId()).stream()
                 .map(AlertResponse::from).collect(Collectors.toList());
     }
 
@@ -71,5 +99,21 @@ public class AlertService {
                 .orElseThrow(() -> ApiException.notFound("Alert not found"));
         alert.setAcknowledged(true);
         return AlertResponse.from(alertRepository.save(alert));
+    }
+
+    /** Marks one of `viewer`'s alerts as read - nobody can mark someone else's. */
+    public AlertResponse acknowledge(User viewer, Long alertId) {
+        Alert alert = alertRepository.findById(alertId)
+                .orElseThrow(() -> ApiException.notFound("Alert not found"));
+        if (!isFor(alert, viewer)) {
+            throw ApiException.forbidden("That alert belongs to someone else");
+        }
+        alert.setAcknowledged(true);
+        return AlertResponse.from(alertRepository.save(alert));
+    }
+
+    private static boolean isFor(Alert alert, User viewer) {
+        return viewer.getRole() == Role.ADMIN || alert.getUser() == null
+                || (alert.getUser().getId() != null && alert.getUser().getId().equals(viewer.getId()));
     }
 }

@@ -4,6 +4,7 @@ import com.ngumn.backend.dto.AuthResponse;
 import com.ngumn.backend.dto.LoginRequest;
 import com.ngumn.backend.dto.RegisterRequest;
 import com.ngumn.backend.entity.AuthToken;
+import com.ngumn.backend.entity.Role;
 import com.ngumn.backend.entity.User;
 import com.ngumn.backend.exception.ApiException;
 import com.ngumn.backend.repository.AuthTokenRepository;
@@ -29,7 +30,14 @@ public class AuthService {
     }
 
     public AuthResponse register(RegisterRequest request) {
-        if (userRepository.existsByEmail(request.getEmail())) {
+        // Anyone on the internet can reach this, so nobody can make
+        // themselves an admin: admin accounts are created on the server
+        // (ADMIN_SEED_PASSWORD), never through sign-up.
+        Role role = request.getRole() != null ? request.getRole() : Role.DRIVER;
+        if (role == Role.ADMIN) {
+            throw ApiException.badRequest("Admin accounts can't be created from the app.");
+        }
+        if (userRepository.existsByEmail(request.getEmail().toLowerCase())) {
             throw ApiException.badRequest("An account with this email already exists");
         }
         String salt = PasswordUtil.generateSalt();
@@ -40,7 +48,7 @@ public class AuthService {
                 .email(request.getEmail().toLowerCase())
                 .passwordHash(hash)
                 .passwordSalt(salt)
-                .role(request.getRole())
+                .role(role)
                 .rewardPoints(0)
                 .active(true)
                 .build();

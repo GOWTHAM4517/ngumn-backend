@@ -3,6 +3,7 @@ package com.ngumn.backend.service;
 import com.ngumn.backend.entity.*;
 import com.ngumn.backend.repository.VehicleRepository;
 import com.ngumn.backend.util.GeoUtil;
+import com.ngumn.backend.util.VehicleLabels;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -18,8 +19,9 @@ import java.util.concurrent.ConcurrentHashMap;
  * - When the rule monitor catches a vehicle over-speeding, driving the
  *   wrong way or driving erratically (see RuleMonitorService), every NGUMN
  *   vehicle within 700 m gets a HIGH alert such as "Speeding vehicle
- *   nearby: AP16-BX-2231 doing 84 km/h, 250 m behind you and approaching.
- *   Stay in your lane and let it pass."
+ *   nearby: A car (AP 16 BX 2231) doing 84 km/h, 250 m behind you and
+ *   approaching. Stay in your lane and let it pass." (people on foot are
+ *   told to keep to the side of the road instead).
  * - When someone reports a rash / speeding / wrong-way driver, vehicles
  *   within 1.5 km of it are told right away - worded as "reported, not
  *   yet verified" - so they can stay alert while the community checks it.
@@ -93,13 +95,17 @@ public class NearbyDangerService {
             if (!firstInWindow(v.getId() + ":" + offender.getId() + ":" + type)) continue;
 
             String where = describe(v, lat, lng, d, offenderHeading);
+            String who = VehicleLabels.describeCapitalised(offender);
+            boolean onFoot = v.effectiveTravelMode().onFoot();
             String message = switch (type) {
-                case OVERSPEED -> String.format(Locale.ROOT, "%s: %s doing %d km/h, %s. Stay in your lane and let it pass.",
-                        SPEEDING_NEARBY, offender.getVehicleCode(), Math.round(speedKmh), where);
-                case WRONG_WAY -> String.format(Locale.ROOT, "%s: %s is driving against traffic, %s. Slow down and keep left.",
-                        WRONG_WAY_NEARBY, offender.getVehicleCode(), where);
+                case OVERSPEED -> String.format(Locale.ROOT, "%s: %s doing %d km/h, %s. %s",
+                        SPEEDING_NEARBY, who, Math.round(speedKmh), where,
+                        onFoot ? "Keep to the side of the road." : "Stay in your lane and let it pass.");
+                case WRONG_WAY -> String.format(Locale.ROOT, "%s: %s is driving against traffic, %s. %s",
+                        WRONG_WAY_NEARBY, who, where,
+                        onFoot ? "Look both ways before you cross." : "Slow down and keep left.");
                 default -> String.format(Locale.ROOT, "%s: %s is braking and speeding up sharply, %s. Keep your distance.",
-                        RASH_NEARBY, offender.getVehicleCode(), where);
+                        RASH_NEARBY, who, where);
             };
             alertService.raise(v, v.getOwner(), AlertType.HIGH_RISK, RiskLevel.HIGH,
                     TrafficRuleService.truncate(message, 290), lat, lng);
@@ -139,8 +145,9 @@ public class NearbyDangerService {
             lng = accused.getCurrentLongitude();
             heading = accused.getSpeedKmh() != null && accused.getSpeedKmh() >= 10 ? accused.getDirectionDegrees() : null;
         }
-        String who = accused != null ? accused.getVehicleCode()
-                : complaint.getPlateNumber() != null ? complaint.getPlateNumber() : "A vehicle";
+        String plate = VehicleLabels.cleanPlate(complaint.getPlateNumber());
+        String who = accused != null ? VehicleLabels.describeCapitalised(accused)
+                : plate != null ? "A vehicle (" + plate + ")" : "A vehicle";
         String what = switch (complaint.getType()) {
             case OVERSPEED -> "reported speeding";
             case WRONG_WAY -> "reported driving on the wrong side";

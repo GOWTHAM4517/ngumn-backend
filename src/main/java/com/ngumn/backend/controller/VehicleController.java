@@ -36,10 +36,27 @@ public class VehicleController {
         return ResponseEntity.ok(vehicleService.myVehicles(user.getId()));
     }
 
+    /**
+     * Vehicles with a live position. With lat / lng, only those within
+     * radiusMeters (default 2 km, at most 20 km) of that point, nearest
+     * first - what the app asks for, so people only see what's around them.
+     */
     @GetMapping
-    public ResponseEntity<List<VehicleResponse>> all(@RequestHeader("Authorization") String authorization) {
+    public ResponseEntity<List<VehicleResponse>> all(@RequestHeader("Authorization") String authorization,
+                                                     @RequestParam(required = false) Double lat,
+                                                     @RequestParam(required = false) Double lng,
+                                                     @RequestParam(required = false) Double radiusMeters) {
         authService.requireUser(authorization);
-        return ResponseEntity.ok(vehicleService.allActive());
+        return ResponseEntity.ok(vehicleService.activeNear(lat, lng, radiusMeters));
+    }
+
+    /** Switch how you're travelling (walking, bike, car...) and/or set your number plate. */
+    @PatchMapping("/{id}")
+    public ResponseEntity<VehicleResponse> update(@RequestHeader("Authorization") String authorization,
+                                                  @PathVariable Long id,
+                                                  @Valid @RequestBody VehicleUpdateRequest request) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(vehicleService.update(user, id, request));
     }
 
     @PostMapping("/{id}/location")

@@ -156,7 +156,7 @@ public class CommunityService {
             settleVotes(VoteTarget.REPORT, report.getId(), verified, report);
             if (verified && reporterId != null) {
                 grant(reporterId, REPORTER_POINTS,
-                        "Report confirmed by " + report.getConfirmations() + " people (#" + report.getId() + ")", report);
+                        "Your " + reportWhat(report) + " was confirmed by " + people(report.getConfirmations()), report);
             }
         }
         webSocketHandler.broadcast("ROAD_REPORT", Map.of("id", report.getId()));
@@ -209,7 +209,24 @@ public class CommunityService {
     }
 
     public List<ComplaintResponse> recentComplaints(User viewer) {
-        return describeComplaints(viewer, complaintRepository.findTop100ByOrderByCreatedAtDesc());
+        return recentComplaints(viewer, null, null, null);
+    }
+
+    /**
+     * The latest rule-breaker reports - with lat / lng, only those within
+     * radiusMeters (default 10 km, at most 20 km) of that point, so people
+     * only see what happened around them.
+     */
+    public List<ComplaintResponse> recentComplaints(User viewer, Double lat, Double lng, Double radiusMeters) {
+        List<ViolationComplaint> latest = complaintRepository.findTop100ByOrderByCreatedAtDesc();
+        if (lat != null && lng != null) {
+            double radius = VehicleService.clampRadius(radiusMeters, 10_000);
+            latest = latest.stream()
+                    .filter(c -> c.getLatitude() != null && c.getLongitude() != null
+                            && GeoUtil.distanceMeters(lat, lng, c.getLatitude(), c.getLongitude()) <= radius)
+                    .toList();
+        }
+        return describeComplaints(viewer, latest);
     }
 
     public List<ComplaintResponse> myComplaints(User viewer) {
@@ -262,8 +279,8 @@ public class CommunityService {
             settleVotes(VoteTarget.COMPLAINT, complaint.getId(), verified, null);
             if (verified) {
                 if (reporterId != null) {
-                    grant(reporterId, REPORTER_POINTS, "Rule-breaker report confirmed by "
-                            + complaint.getConfirmations() + " people (#" + complaint.getId() + ")", null);
+                    grant(reporterId, REPORTER_POINTS, "Your rule-breaker report was confirmed by "
+                            + people(complaint.getConfirmations()), null);
                 }
                 if (accused != null && accused.getOwner() != null) {
                     boolean simulatedVehicle = Boolean.TRUE.equals(accused.getIsSimulated());
@@ -410,15 +427,34 @@ public class CommunityService {
 
     /** Records whether each answer matched the outcome, and rewards the ones that did. */
     private void settleVotes(VoteTarget target, Long targetId, boolean verified, RoadReport report) {
-        String what = target == VoteTarget.REPORT ? "a hazard report" : "a rule-breaker report";
+        String what = target == VoteTarget.REPORT && report != null ? "a " + reportWhat(report)
+                : target == VoteTarget.REPORT ? "a hazard report" : "a rule-breaker report";
         for (CommunityVote vote : voteRepository.findByTargetTypeAndTargetId(target, targetId)) {
             boolean matched = Boolean.TRUE.equals(vote.getAgree()) == verified;
             vote.setOutcomeMatched(matched);
             voteRepository.save(vote);
             if (matched && vote.getVoter() != null) {
-                grant(vote.getVoter().getId(), VOTER_POINTS, "Helped verify " + what + " (#" + targetId + ")", report);
+                grant(vote.getVoter().getId(), VOTER_POINTS, "You helped check " + what, report);
             }
         }
+    }
+
+    /** "pothole report", "traffic jam report"... for messages people read. */
+    public static String reportWhat(RoadReport report) {
+        ReportType type = report != null && report.getType() != null ? report.getType() : ReportType.OTHER;
+        return switch (type) {
+            case ACCIDENT -> "accident report";
+            case POTHOLE -> "pothole report";
+            case TRAFFIC_JAM -> "traffic jam report";
+            case ROAD_HAZARD -> "road hazard report";
+            case EMERGENCY -> "emergency report";
+            default -> "report";
+        };
+    }
+
+    private static String people(Integer n) {
+        int count = n != null ? n : 0;
+        return count == 1 ? "1 person" : count + " people";
     }
 
     /** Re-reads the user first so points are added to their latest total. */

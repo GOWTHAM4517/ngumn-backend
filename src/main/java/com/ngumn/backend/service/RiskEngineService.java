@@ -11,7 +11,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
@@ -34,6 +36,8 @@ public class RiskEngineService {
 
     private static final int DEFAULT_SPEED_LIMIT_KMH = 60;
     private static final long ALERT_REPEAT_MS = 3 * 60_000;
+    /** Only vehicles seen in the last 3 minutes count as "nearby". */
+    private static final long LIVE_SECONDS = 180;
 
     private final VehicleRepository vehicleRepository;
     private final RoadReportRepository roadReportRepository;
@@ -78,7 +82,8 @@ public class RiskEngineService {
         // --- 1. Overspeed factor -------------------------------------
         int speedLimit = resolveSpeedLimit(vehicle.getCurrentLatitude(), vehicle.getCurrentLongitude());
         double speed = vehicle.getSpeedKmh() != null ? vehicle.getSpeedKmh() : 0;
-        boolean overspeed = speed > speedLimit + overspeedMarginKmh;
+        // Speed limits are for motor vehicles - not people walking or cycling.
+        boolean overspeed = vehicle.effectiveTravelMode().motorised() && speed > speedLimit + overspeedMarginKmh;
         if (overspeed) {
             int add = 35;
             score += add;
@@ -134,31 +139,53 @@ public class RiskEngineService {
                 .build();
         analysis = riskAnalysisRepository.save(analysis);
 
-        raiseAlertsIfNeeded(vehicle, level, overspeed, !nearby.isEmpty(), hazardCount > 0);
+        boolean emergencyNearby = nearby.stream().anyMatch(v -> Boolean.TRUE.equals(v.getEmergencyStatus()));
+        raiseAlertsIfNeeded(vehicle, level, overspeed, speed, speedLimit, nearby.size(), emergencyNearby, hazardCount);
 
         return analysis;
     }
 
-    private void raiseAlertsIfNeeded(Vehicle vehicle, RiskLevel level, boolean overspeed,
-                                      boolean hasNearby, boolean hasHazard) {
+    /**
+     * Alerts in plain words. Hazards on the road ahead get their own,
+     * more specific warning ("Pothole 300 m ahead") from HazardAheadService,
+     * so they only add to the score here.
+     */
+    private void raiseAlertsIfNeeded(Vehicle vehicle, RiskLevel level, boolean overspeed, double speed, int speedLimit,
+                                      int nearbyCount, boolean emergencyNearby, long hazardCount) {
         if (level == RiskLevel.LOW) {
             return;
         }
         if (overspeed && due(vehicle, AlertType.OVERSPEED)) {
             alertService.raise(vehicle, vehicle.getOwner(), AlertType.OVERSPEED, level,
-                    "Vehicle " + vehicle.getVehicleCode() + " is over the configured speed limit.",
-                    vehicle.getCurrentLatitude(), vehicle.getCurrentLongitude());
-        }
-        if (hasHazard && due(vehicle, AlertType.NEARBY_HAZARD)) {
-            alertService.raise(vehicle, vehicle.getOwner(), AlertType.NEARBY_HAZARD, level,
-                    "Road hazard reported near vehicle " + vehicle.getVehicleCode() + ".",
+                    String.format(Locale.ROOT, "You're doing %d km/h where the limit is %d km/h. Slow down.",
+                            Math.round(speed), speedLimit),
                     vehicle.getCurrentLatitude(), vehicle.getCurrentLongitude());
         }
         if (level == RiskLevel.HIGH && due(vehicle, AlertType.HIGH_RISK)) {
             alertService.raise(vehicle, vehicle.getOwner(), AlertType.HIGH_RISK, level,
-                    "High risk condition detected for vehicle " + vehicle.getVehicleCode() + ".",
+                    highRiskMessage(vehicle.effectiveTravelMode(), overspeed, nearbyCount, emergencyNearby, hazardCount),
                     vehicle.getCurrentLatitude(), vehicle.getCurrentLongitude());
         }
+    }
+
+    /**
+     * "Take extra care - you're over the speed limit with 3 vehicles close
+     * by. Slow down and keep your distance." / "Take extra care - 4 vehicles
+     * close by. Keep your distance."
+     */
+    public static String highRiskMessage(TravelMode mode, boolean overspeed, int nearbyCount, boolean emergencyNearby, long hazardCount) {
+        List<String> around = new ArrayList<>();
+        if (nearbyCount > 0) around.add(nearbyCount == 1 ? "a vehicle close by" : nearbyCount + " vehicles close by");
+        if (emergencyNearby) around.add("an emergency vehicle nearby");
+        if (hazardCount > 0) around.add(hazardCount == 1 ? "a reported hazard nearby" : hazardCount + " reported hazards nearby");
+        String list = around.isEmpty() ? "" : around.size() == 1 ? around.get(0)
+                : String.join(", ", around.subList(0, around.size() - 1)) + " and " + around.get(around.size() - 1);
+        String situation;
+        if (overspeed) situation = list.isEmpty() ? "you're over the speed limit" : "you're over the speed limit with " + list;
+        else situation = list.isEmpty() ? "the road around you is busy" : list;
+        String advice = mode.onFoot() ? "Cross carefully and keep to the side of the road."
+                : overspeed ? "Slow down and keep your distance." : "Keep your distance.";
+        return "Take extra care - " + situation + ". " + advice;
     }
 
     /** True (and remembered) if this kind of alert wasn't raised for the vehicle in the last 3 minutes. */
@@ -173,10 +200,18 @@ public class RiskEngineService {
         return true;
     }
 
+    /**
+     * Other vehicles within `radiusMeters` whose position is live (from the
+     * last 3 minutes) - not ones left on the map by people who stopped
+     * sharing, and not the same person's other vehicles.
+     */
     public List<Vehicle> findNearbyVehicles(Vehicle vehicle, double radiusMeters) {
+        LocalDateTime now = LocalDateTime.now();
+        Long ownerId = vehicle.getOwner() != null ? vehicle.getOwner().getId() : null;
         return vehicleRepository.findByStatus(VehicleStatus.ACTIVE).stream()
                 .filter(v -> !v.getId().equals(vehicle.getId()))
-                .filter(v -> v.getCurrentLatitude() != null && v.getCurrentLongitude() != null)
+                .filter(v -> ownerId == null || v.getOwner() == null || !ownerId.equals(v.getOwner().getId()))
+                .filter(v -> v.seenWithin(now, LIVE_SECONDS))
                 .filter(v -> GeoUtil.distanceMeters(vehicle.getCurrentLatitude(), vehicle.getCurrentLongitude(),
                         v.getCurrentLatitude(), v.getCurrentLongitude()) <= radiusMeters)
                 .collect(Collectors.toList());

@@ -31,9 +31,13 @@ public class DemoController {
 
     @PostMapping("/start")
     public ResponseEntity<Map<String, Object>> start(@RequestHeader("Authorization") String authorization,
-                                                       @RequestParam(defaultValue = "6") int vehicleCount) {
+                                                       @RequestParam(defaultValue = "6") int vehicleCount,
+                                                       @RequestParam(required = false) Double lat,
+                                                       @RequestParam(required = false) Double lng) {
         requireAdmin(authorization);
-        String message = demoSimulatorService.start(vehicleCount);
+        // lat / lng: start the sample traffic around that point (e.g. where
+        // the demo is being shown) instead of the default area.
+        String message = demoSimulatorService.start(vehicleCount, lat, lng);
         return ResponseEntity.ok(Map.of("message", message, "running", demoSimulatorService.isRunning()));
     }
 

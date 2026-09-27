@@ -52,7 +52,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * gets a caution and drivers nearby a warning. Demo Mode vehicles wander
  * randomly, so only their speed is checked, and they never cause warnings
  * to real drivers. Emergency vehicles on an active emergency run are
- * exempt.
+ * exempt, and so is anyone travelling on foot (travel mode WALK).
  */
 @Service
 public class RuleMonitorService {
@@ -117,6 +117,12 @@ public class RuleMonitorService {
         }
         Long vid = vehicle.getId();
         if (vehicle.getVehicleType() == VehicleType.EMERGENCY && Boolean.TRUE.equals(vehicle.getEmergencyStatus())) {
+            clear(vid);
+            return;
+        }
+        // Someone on foot isn't bound by speed limits, one-way roads or
+        // no-entry zones for vehicles.
+        if (vehicle.effectiveTravelMode().onFoot()) {
             clear(vid);
             return;
         }

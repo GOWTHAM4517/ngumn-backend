@@ -31,6 +31,20 @@ public class Vehicle {
     @Column(nullable = false, length = 30)
     private VehicleType vehicleType;
 
+    /**
+     * How the owner is travelling right now (walking, bike, car...), set
+     * from the app. Null on rows from before travel modes - see
+     * effectiveTravelMode(). A plain varchar (not a database enum) so new
+     * modes never need a schema change.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20, columnDefinition = "varchar(20)")
+    private TravelMode travelMode;
+
+    /** Number plate the owner chose to show (optional), e.g. "AP 16 BX 2231". */
+    @Column(length = 20)
+    private String plateNumber;
+
     private Double currentLatitude;
 
     private Double currentLongitude;
@@ -58,6 +72,25 @@ public class Vehicle {
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
+
+    /**
+     * The travel mode to go by: the one the owner chose, or - for rows
+     * saved before travel modes existed - a guess from the vehicle type
+     * (and walking for people who signed up as pedestrians).
+     */
+    public TravelMode effectiveTravelMode() {
+        if (travelMode != null) return travelMode;
+        if (owner != null && owner.getRole() == Role.PEDESTRIAN && vehicleType != VehicleType.EMERGENCY) {
+            return TravelMode.WALK;
+        }
+        return TravelMode.from(vehicleType);
+    }
+
+    /** True if the position was updated within the last `seconds` seconds. */
+    public boolean seenWithin(LocalDateTime now, long seconds) {
+        return currentLatitude != null && currentLongitude != null && lastLocationUpdate != null
+                && !lastLocationUpdate.isBefore(now.minusSeconds(seconds));
+    }
 
     @PrePersist
     protected void onCreate() {

@@ -30,11 +30,15 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Service
 public class DemoSimulatorService {
 
-    private static final String DEMO_USER_EMAIL = "demo@ngumn.local";
-    // Default demo area (Hyderabad, India) - change freely, this is just
-    // a starting point for the simulated vehicles to wander around.
+    public static final String DEMO_USER_EMAIL = "demo@ngumn.local";
+    // Default demo area (Hyderabad, India) - used when the admin doesn't
+    // say where to start; the simulated traffic wanders around it.
     private static final double BASE_LAT = 17.3850;
     private static final double BASE_LNG = 78.4867;
+    /** Sample traffic is a mix of the ways people actually get around. */
+    private static final TravelMode[] DEMO_MODES = {
+            TravelMode.CAR, TravelMode.CAR, TravelMode.BIKE, TravelMode.BIKE, TravelMode.AUTO,
+            TravelMode.BUS, TravelMode.TRUCK, TravelMode.WALK, TravelMode.CYCLE};
     // Simulated people who answer "is this true?" for pending reports and
     // rule-breaker complaints while the demo runs, so community
     // verification can be shown with one phone.
@@ -72,11 +76,20 @@ public class DemoSimulatorService {
     }
 
     public synchronized String start(int vehicleCount) {
+        return start(vehicleCount, null, null);
+    }
+
+    /**
+     * Starts the sample traffic around (lat, lng) - e.g. wherever the demo
+     * is being shown - or around the default area when no point is given.
+     */
+    public synchronized String start(int vehicleCount, Double lat, Double lng) {
         if (!demoModeEnabled) {
             return "Demo mode is disabled (ngumn.demo-mode.enabled=false)";
         }
         User demoUser = ensureDemoUser();
-        seedVehicles(demoUser, vehicleCount);
+        seedVehicles(demoUser, Math.max(1, Math.min(vehicleCount, 40)),
+                lat != null ? lat : BASE_LAT, lng != null ? lng : BASE_LNG);
         ensureDemoVoters();
         running.set(true);
         return "Demo started with " + simulatedVehicleIds.size() + " simulated vehicles";
@@ -129,23 +142,29 @@ public class DemoSimulatorService {
         }
     }
 
-    private void seedVehicles(User demoUser, int count) {
+    private void seedVehicles(User demoUser, int count, double baseLat, double baseLng) {
         simulatedVehicleIds.clear();
-        VehicleType[] types = VehicleType.values();
         for (int i = 0; i < count; i++) {
             String code = "DEMO-" + (1000 + i);
+            TravelMode mode = DEMO_MODES[random.nextInt(DEMO_MODES.length)];
             Vehicle vehicle = vehicleRepository.findByVehicleCode(code).orElseGet(() -> Vehicle.builder()
                     .vehicleCode(code)
                     .owner(demoUser)
-                    .vehicleType(types[random.nextInt(types.length)])
+                    .vehicleType(mode.toVehicleType())
+                    .travelMode(mode)
                     .status(VehicleStatus.ACTIVE)
                     .emergencyStatus(false)
                     .isSimulated(true)
                     .speedKmh(0.0)
                     .directionDegrees(0.0)
-                    .currentLatitude(BASE_LAT + (random.nextDouble() - 0.5) * 0.02)
-                    .currentLongitude(BASE_LNG + (random.nextDouble() - 0.5) * 0.02)
                     .build());
+            if (vehicle.getTravelMode() == null) {
+                vehicle.setTravelMode(mode);
+                vehicle.setVehicleType(mode.toVehicleType());
+            }
+            // (Re)start every sample vehicle around the chosen point.
+            vehicle.setCurrentLatitude(baseLat + (random.nextDouble() - 0.5) * 0.02);
+            vehicle.setCurrentLongitude(baseLng + (random.nextDouble() - 0.5) * 0.02);
             vehicle.setIsSimulated(true);
             vehicle = vehicleRepository.save(vehicle);
             simulatedVehicleIds.add(vehicle.getId());
@@ -162,13 +181,19 @@ public class DemoSimulatorService {
         }
         for (Long id : simulatedVehicleIds) {
             vehicleRepository.findById(id).ifPresent(vehicle -> {
+                // People walking or cycling cover less ground per tick.
+                TravelMode mode = vehicle.effectiveTravelMode();
+                double step = mode == TravelMode.WALK ? 0.0002 : mode == TravelMode.CYCLE ? 0.0005 : 0.0015;
                 double lat = (vehicle.getCurrentLatitude() != null ? vehicle.getCurrentLatitude() : BASE_LAT)
-                        + (random.nextDouble() - 0.5) * 0.0015;
+                        + (random.nextDouble() - 0.5) * step;
                 double lng = (vehicle.getCurrentLongitude() != null ? vehicle.getCurrentLongitude() : BASE_LNG)
-                        + (random.nextDouble() - 0.5) * 0.0015;
-                // Occasionally simulate a speeding vehicle (demo only).
+                        + (random.nextDouble() - 0.5) * step;
+                // Occasionally simulate a speeding vehicle (demo only);
+                // people walking or cycling move at their own pace.
                 double speed = Boolean.TRUE.equals(vehicle.getEmergencyStatus())
                         ? 70 + random.nextInt(20)
+                        : mode == TravelMode.WALK ? 3 + random.nextInt(3)
+                        : mode == TravelMode.CYCLE ? 10 + random.nextInt(8)
                         : random.nextInt(100) < 15
                             ? 75 + random.nextInt(25)
                             : 20 + random.nextInt(45);
@@ -199,7 +224,7 @@ public class DemoSimulatorService {
             RoadReportRequest request = new RoadReportRequest();
             ReportType[] types = {ReportType.POTHOLE, ReportType.ACCIDENT, ReportType.TRAFFIC_JAM, ReportType.ROAD_HAZARD};
             request.setType(types[random.nextInt(types.length)]);
-            request.setDescription("(Simulated demo-mode hazard report)");
+            request.setDescription("(Sample report - not a real hazard)");
             request.setLatitude(vehicle.getCurrentLatitude());
             request.setLongitude(vehicle.getCurrentLongitude());
             roadReportService.submit(vehicle.getOwner(), request);
