@@ -17,7 +17,15 @@ import java.time.LocalDateTime;
  * vehicle that it's about them (they can't vote on it).
  *
  * Reactions, Facebook-style: likeCount (= helpfulCount), dislikeCount,
- * myReaction ("LIKE", "DISLIKE" or null) and commentCount.
+ * myReaction ("LIKE", "DISLIKE" or null) and commentCount. Likes decide
+ * whether it's trusted (VERIFIED); more than two dislikes take it down
+ * (REJECTED). confirmations / denials mirror likes / dislikes, and myVote
+ * is true after a like, false after a dislike or "not an issue anymore",
+ * for older apps.
+ *
+ * Also whether it's still shown to people nearby (active), until when
+ * (expiresAt), or why not (endReason: EXPIRED, CLEARED, REJECTED), and the
+ * "not an issue anymore" count (goneCount / goneByMe).
  */
 @Data
 @AllArgsConstructor
@@ -49,6 +57,12 @@ public class ComplaintResponse {
     private Integer dislikeCount;
     private String myReaction;
     private Integer commentCount;
+    private Boolean active;
+    private LocalDateTime expiresAt;
+    private LocalDateTime clearedAt;
+    private String endReason;
+    private Integer goneCount;
+    private Boolean goneByMe;
 
     public static ComplaintResponse from(ViolationComplaint c, Integer reporterTrust, Integer confirmationsNeeded,
                                          Boolean myVote, Long viewerId) {
@@ -62,6 +76,12 @@ public class ComplaintResponse {
 
     public static ComplaintResponse from(ViolationComplaint c, Integer reporterTrust, Integer confirmationsNeeded,
                                          Boolean myVote, Long viewerId, boolean likedByMe, boolean dislikedByMe) {
+        return from(c, reporterTrust, confirmationsNeeded, myVote, viewerId, likedByMe, dislikedByMe, false, LocalDateTime.now());
+    }
+
+    public static ComplaintResponse from(ViolationComplaint c, Integer reporterTrust, Integer confirmationsNeeded,
+                                         Boolean myVote, Long viewerId, boolean likedByMe, boolean dislikedByMe,
+                                         boolean goneByMe, LocalDateTime now) {
         int likes = c.getHelpfulCount() != null ? c.getHelpfulCount() : 0;
         boolean accusedIsMe = viewerId != null && c.getAccusedVehicle() != null
                 && c.getAccusedVehicle().getOwner() != null
@@ -92,7 +112,13 @@ public class ComplaintResponse {
                 likes,
                 c.getDislikeCount() != null ? c.getDislikeCount() : 0,
                 likedByMe ? "LIKE" : dislikedByMe ? "DISLIKE" : null,
-                c.getCommentCount() != null ? c.getCommentCount() : 0
+                c.getCommentCount() != null ? c.getCommentCount() : 0,
+                c.isActiveAt(now),
+                c.effectiveExpiresAt(),
+                c.getClearedAt(),
+                c.endReasonAt(now),
+                c.getGoneCount() != null ? c.getGoneCount() : 0,
+                goneByMe
         );
     }
 }

@@ -19,8 +19,9 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 /**
- * "Report a rule-breaker" - complaints about other drivers, verified by
- * people nearby rather than an admin (see CommunityService).
+ * "Report a rule-breaker" - complaints about other drivers, trusted or
+ * taken down by people nearby liking or disliking them rather than by an
+ * admin (see CommunityService).
  */
 @RestController
 @RequestMapping("/api/complaints")
@@ -95,12 +96,29 @@ public class ComplaintController {
         return ResponseEntity.ok(communityService.myComplaints(user));
     }
 
+    /** Older apps' "Did you see it?" Yes / No - yes is a like, no is "not an issue anymore". */
     @PostMapping("/{id}/vote")
     public ResponseEntity<ComplaintResponse> vote(@RequestHeader("Authorization") String authorization,
                                                   @PathVariable Long id,
                                                   @Valid @RequestBody VoteRequest request) {
         User user = authService.requireUser(authorization);
-        return ResponseEntity.ok(communityService.voteOnComplaint(user, id, request));
+        return ResponseEntity.ok(feedbackService.answerComplaint(user, id, request));
+    }
+
+    /** "Not an issue anymore" - two of these take the report down early. */
+    @PostMapping("/{id}/gone")
+    public ResponseEntity<ComplaintResponse> markGone(@RequestHeader("Authorization") String authorization,
+                                                      @PathVariable Long id) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(feedbackService.markComplaintGone(user, id));
+    }
+
+    /** Remove: the reporter takes their own rule-breaker report down. */
+    @PostMapping("/{id}/clear")
+    public ResponseEntity<ComplaintResponse> clear(@RequestHeader("Authorization") String authorization,
+                                                   @PathVariable Long id) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(feedbackService.clearOwnComplaint(user, id));
     }
 
     /** "Helpful" - one tap on someone else's rule-breaker report. */

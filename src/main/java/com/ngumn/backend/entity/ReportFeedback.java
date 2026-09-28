@@ -9,9 +9,14 @@ import lombok.NoArgsConstructor;
 import java.time.LocalDateTime;
 
 /**
- * One person's one-tap feedback on a report: "Helpful" (the heart) or
- * "Not there anymore". At most one of each kind per person per report
+ * One person's one-tap feedback on a report: a like, a dislike or "Not
+ * an issue anymore". At most one of each kind per person per report
  * (unique key), so tapping twice can't count twice.
+ *
+ * Likes and dislikes decide a report (see CommunityService.settleReport);
+ * once it's decided, outcomeMatched records whether each one agreed with
+ * the outcome - that's what "accurate answers" in a person's trust score
+ * count.
  *
  * Works for hazard reports and rule-breaker reports alike (targetType,
  * like CommunityVote). Enum columns are plain varchar so new values can
@@ -47,6 +52,9 @@ public class ReportFeedback {
 
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
+
+    /** Set when the report is decided: did this like / dislike match the outcome? Null until then (and for "not an issue anymore"). */
+    private Boolean outcomeMatched;
 
     @PrePersist
     protected void onCreate() {

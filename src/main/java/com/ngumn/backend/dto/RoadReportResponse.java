@@ -21,7 +21,11 @@ import java.time.LocalDateTime;
  *
  * Reactions, Facebook-style: likeCount (the same as helpfulCount - a like
  * is "helpful"), dislikeCount, myReaction ("LIKE", "DISLIKE" or null) and
- * commentCount. helpfulCount / helpfulByMe stay for older apps.
+ * commentCount. helpfulCount / helpfulByMe stay for older apps. Likes
+ * decide whether it's trusted (VERIFIED) and more than two dislikes take
+ * it down (REJECTED); confirmations / denials mirror likes / dislikes, and
+ * myVote is true after a like, false after a dislike or "not there
+ * anymore", for older apps.
  */
 @Data
 @AllArgsConstructor

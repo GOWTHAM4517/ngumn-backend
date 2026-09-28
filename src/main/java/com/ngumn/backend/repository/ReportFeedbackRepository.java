@@ -13,4 +13,8 @@ public interface ReportFeedbackRepository extends JpaRepository<ReportFeedback, 
                                                                         Long userId, FeedbackKind kind);
     long countByTargetTypeAndTargetIdAndKind(VoteTarget targetType, Long targetId, FeedbackKind kind);
     List<ReportFeedback> findByUserIdAndTargetTypeAndKind(Long userId, VoteTarget targetType, FeedbackKind kind);
+    List<ReportFeedback> findByTargetTypeAndTargetId(VoteTarget targetType, Long targetId);
+    /** A person's likes / dislikes that matched how the report turned out (for their trust score). */
+    long countByUserIdAndOutcomeMatchedTrue(Long userId);
+    long countByUserIdAndOutcomeMatchedFalse(Long userId);
 }

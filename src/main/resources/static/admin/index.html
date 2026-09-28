@@ -420,9 +420,11 @@
   };
   var SOURCE_LABELS = { MONITOR: 'auto-detected', DRIVE_GUARD: 'Drive Guard', COMMUNITY: 'community' };
 
+  // Likes build trust, more than two dislikes take a report down (CommunityService).
   function votes(item) {
-    var yes = item.confirmations || 0, no = item.denials || 0, need = item.confirmationsNeeded || 3;
-    return '<div class="votes">&#10003; <b>' + yes + '</b> &nbsp; &#10007; <b>' + no + '</b> &nbsp;of ' + need + ' needed</div>';
+    var likes = item.likeCount != null ? item.likeCount : (item.confirmations || 0);
+    var dislikes = item.dislikeCount != null ? item.dislikeCount : (item.denials || 0);
+    return '<div class="votes" title="likes / dislikes">&#128077; <b>' + likes + '</b> &nbsp; &#128078; <b>' + dislikes + '</b></div>';
   }
 
   function loadComplaints() {

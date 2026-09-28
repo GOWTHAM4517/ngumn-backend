@@ -54,7 +54,7 @@ public class DemoSimulatorService {
     private final VehicleService vehicleService;
     private final RoadReportService roadReportService;
     private final EmergencyService emergencyService;
-    private final CommunityService communityService;
+    private final ReportFeedbackService feedbackService;
 
     @Value("${ngumn.demo-mode.enabled:true}")
     private boolean demoModeEnabled;
@@ -66,13 +66,13 @@ public class DemoSimulatorService {
 
     public DemoSimulatorService(VehicleRepository vehicleRepository, UserRepository userRepository,
                                  VehicleService vehicleService, RoadReportService roadReportService,
-                                 EmergencyService emergencyService, CommunityService communityService) {
+                                 EmergencyService emergencyService, ReportFeedbackService feedbackService) {
         this.vehicleRepository = vehicleRepository;
         this.userRepository = userRepository;
         this.vehicleService = vehicleService;
         this.roadReportService = roadReportService;
         this.emergencyService = emergencyService;
-        this.communityService = communityService;
+        this.feedbackService = feedbackService;
     }
 
     public synchronized String start(int vehicleCount) {
@@ -207,10 +207,10 @@ public class DemoSimulatorService {
             });
         }
 
-        // Now and then a simulated person answers an open report or
-        // complaint (about one answer every 12 s).
+        // Now and then a simulated person likes an open report or
+        // rule-breaker report (about one every 12 s) - never a dislike.
         if (random.nextDouble() < 0.4) {
-            communityService.demoVote(demoVoters, random);
+            feedbackService.demoReact(demoVoters, random);
         }
     }
 

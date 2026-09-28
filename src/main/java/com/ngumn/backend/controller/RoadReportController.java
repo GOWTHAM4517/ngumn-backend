@@ -68,13 +68,13 @@ public class RoadReportController {
         return ResponseEntity.ok(roadReportService.myReports(user));
     }
 
-    /** Community verification: "is this hazard really there?" - true or false. */
+    /** Older apps' "Still there?" Yes / No - yes is a like, no is "not there anymore". */
     @PostMapping("/{id}/vote")
     public ResponseEntity<RoadReportResponse> vote(@RequestHeader("Authorization") String authorization,
                                                      @PathVariable Long id,
                                                      @Valid @RequestBody VoteRequest request) {
         User user = authService.requireUser(authorization);
-        return ResponseEntity.ok(communityService.voteOnReport(user, id, request));
+        return ResponseEntity.ok(feedbackService.answerReport(user, id, request));
     }
 
     /** One report by id - e.g. opened from a notification (also once it has cleared). */
@@ -126,7 +126,7 @@ public class RoadReportController {
         return ResponseEntity.ok(feedbackService.setReportHelpful(user, id, false));
     }
 
-    /** "Not there anymore" - enough of these take the report down early. */
+    /** "Not there anymore" / "not an issue anymore" - two of these take the report down early. */
     @PostMapping("/{id}/gone")
     public ResponseEntity<RoadReportResponse> markGone(@RequestHeader("Authorization") String authorization,
                                                        @PathVariable Long id) {
@@ -134,7 +134,7 @@ public class RoadReportController {
         return ResponseEntity.ok(feedbackService.markGone(user, id));
     }
 
-    /** The reporter takes their own report down ("it's cleared"). */
+    /** Remove: the reporter takes their own report down ("it's cleared"). */
     @PostMapping("/{id}/clear")
     public ResponseEntity<RoadReportResponse> clear(@RequestHeader("Authorization") String authorization,
                                                     @PathVariable Long id) {

@@ -14,14 +14,20 @@ import java.util.Locale;
  * description tells them apart: "Animal on road" and "Road work / lane
  * closed" are both ROAD_HAZARD but last very different times.
  *
- * Every "yes, it's still there" from someone nearby restarts the clock
- * (see CommunityService.voteOnReport), so a hazard people keep confirming
+ * Every like ("it's there") from someone restarts the clock (see
+ * ReportFeedbackService.reactToReport), so a hazard people keep confirming
  * stays up, and one nobody sees any more quietly disappears.
+ *
+ * Rule-breaker reports are about something that already happened - the
+ * vehicle has moved on - so they're shown for COMPLAINT and no longer.
  */
 public final class ReportLifetime {
 
     /** The longest lifetime below - bounds "recent reports" queries. */
     public static final Duration MAX = Duration.ofDays(7);
+
+    /** How long a rule-breaker report is shown to people nearby. */
+    public static final Duration COMPLAINT = Duration.ofHours(2);
 
     private ReportLifetime() {
     }
