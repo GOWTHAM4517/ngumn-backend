@@ -38,10 +38,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * driver is alerted through the normal alert feed; TrafficRuleService
  * collapses repeats within two minutes.
  *
- * Other drivers are protected too: whenever a vehicle is caught speeding,
- * going the wrong way or driving erratically, NearbyDangerService warns
- * the NGUMN drivers within 700 m ("Speeding vehicle nearby ... behind you
- * and approaching").
+ * Other people are protected too: whenever a vehicle is caught speeding,
+ * going the wrong way, driving erratically or entering a no-entry zone,
+ * NearbyDangerService tells everyone around it - a warning for the people
+ * it's coming towards ("Speeding vehicle nearby ... behind you and
+ * approaching"), a calmer note for the rest of the people within their
+ * chosen radius ("Rule broken nearby ...").
  *
  * Speed limits only apply inside mapped zones - elsewhere the app's Drive
  * Guard gives reminders but nothing is recorded, because the real limit
@@ -241,6 +243,7 @@ public class RuleMonitorService {
                     .zoneName(noEntry.getName())
                     .simulated(false)
                     .build(), true);
+            nearbyDangerService.warnAboutViolation(vehicle, ViolationType.NO_ENTRY, speed, heading);
         }
 
         // 4. Erratic driving - repeated sharp braking / acceleration. Uses

@@ -20,13 +20,17 @@ public class AlertResponse {
     private Double longitude;
     private Boolean acknowledged;
     private LocalDateTime createdAt;
+    /** The hazard report / rule-breaker report it's about, if any (the app opens it, and offers like / comment). */
+    private Long reportId;
+    private Long complaintId;
 
     public static AlertResponse from(Alert a) {
         return new AlertResponse(
                 a.getId(),
                 a.getVehicle() != null ? a.getVehicle().getId() : null,
                 a.getType(), a.getRiskLevel(), a.getMessage(),
-                a.getLatitude(), a.getLongitude(), a.getAcknowledged(), a.getCreatedAt()
+                a.getLatitude(), a.getLongitude(), a.getAcknowledged(), a.getCreatedAt(),
+                a.getReportId(), a.getComplaintId()
         );
     }
 }

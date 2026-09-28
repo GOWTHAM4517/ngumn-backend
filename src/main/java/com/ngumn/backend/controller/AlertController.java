@@ -31,11 +31,16 @@ public class AlertController {
         return ResponseEntity.ok(alertService.recent(lat, lng, radiusMeters));
     }
 
-    /** Your own alerts (from any of your vehicles), newest first. */
+    /**
+     * Your own alerts (from any of your vehicles), newest first. With
+     * `after`, only the ones newer than that alert id - what the app polls
+     * for while it's in the background.
+     */
     @GetMapping("/mine")
-    public ResponseEntity<List<AlertResponse>> mine(@RequestHeader("Authorization") String authorization) {
+    public ResponseEntity<List<AlertResponse>> mine(@RequestHeader("Authorization") String authorization,
+                                                    @RequestParam(required = false) Long after) {
         User user = authService.requireUser(authorization);
-        return ResponseEntity.ok(alertService.forUser(user));
+        return ResponseEntity.ok(after != null ? alertService.forUserAfter(user, after) : alertService.forUser(user));
     }
 
     @GetMapping("/vehicle/{vehicleId}")

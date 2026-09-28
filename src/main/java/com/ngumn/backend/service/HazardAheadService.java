@@ -4,6 +4,8 @@ import com.ngumn.backend.entity.*;
 import com.ngumn.backend.repository.RoadReportRepository;
 import com.ngumn.backend.repository.VehicleRepository;
 import com.ngumn.backend.util.GeoUtil;
+import com.ngumn.backend.util.LiveRecipients;
+import com.ngumn.backend.util.NotificationPrefs;
 import com.ngumn.backend.util.ReportLifetime;
 import com.ngumn.backend.util.VehicleLabels;
 import org.slf4j.Logger;
@@ -18,29 +20,37 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Hazard reports reach the people who are actually going to meet them -
- * not everyone who uses the app.
+ * Hazard reports reach the people around them the moment they're made -
+ * nobody has to open the app and go looking.
  *
- * - When someone reports a hazard, people near it are told straight away,
- *   but only those heading towards it (or right next to it, or stopped
- *   within 300 m): "Hazard ahead: Pothole, 300 m ahead of you - reported
- *   just now. Slow down."
+ * - When someone reports a hazard, everyone sharing their location within
+ *   their chosen radius (Settings > Notifications, 2 km unless changed) is
+ *   told straight away. People heading into it (or right next to it, or
+ *   stopped within 300 m) get the safety warning: "Hazard ahead: Pothole,
+ *   300 m ahead of you - reported just now. Slow down." Everyone else in
+ *   range gets a calmer note: "Hazard reported nearby: Pothole, 1.2 km to
+ *   the north-east - reported just now. Take care if you go that way."
  * - As people move (every location update), a report on the road in front
  *   of them - within 800 m and within 45 degrees of their direction of
- *   travel - gets the same warning before they reach it.
+ *   travel - gets the "Hazard ahead" warning before they reach it, even if
+ *   they already had the calmer note.
  *
- * Each person hears about the same report at most once every 20 minutes,
- * never about their own reports, and only while their position is live.
- * Reports that have cleared (expired, taken down or rejected) never warn
- * anyone. The app recognises these alerts by their headline ("Hazard
- * ahead" / "Hazard nearby") and shows them as a spoken heads-up - keep in
- * sync with ngumn-app/src/lib/alerts-store.tsx.
+ * Each person hears about the same report at most once every 20 minutes
+ * as a warning (and gets the "in your area" note once), never about their
+ * own reports, and only while their position is live. Reports that have
+ * cleared (expired, taken down or rejected) never warn anyone. Someone who
+ * turned hazard notifications off still gets the warnings for hazards in
+ * their path. The app recognises these alerts by their headline ("Hazard
+ * ahead" / "Hazard nearby" / "Hazard reported nearby") - keep in sync with
+ * ngumn-app/src/lib/alerts-store.tsx.
  */
 @Service
 public class HazardAheadService {
 
     public static final String HEADLINE_AHEAD = "Hazard ahead";
     public static final String HEADLINE_NEARBY = "Hazard nearby";
+    /** A new report somewhere in your area, not in your path. */
+    public static final String HEADLINE_REPORTED = "Hazard reported nearby";
 
     /** How far ahead on the road a report is worth a warning. */
     static final double AHEAD_M = 800;
@@ -52,6 +62,8 @@ public class HazardAheadService {
     static final double AHEAD_DEGREES = 45;
     static final double MOVING_KMH = 8;
     static final long REPEAT_MS = 20 * 60_000;
+    /** The "in your area" note about a new report comes once. */
+    static final long AREA_REPEAT_MS = 12 * 60 * 60_000L;
     static final long LIVE_SECONDS = 180;
     private static final long CACHE_MS = 10_000;
 
@@ -61,6 +73,7 @@ public class HazardAheadService {
     private final VehicleRepository vehicleRepository;
     private final AlertService alertService;
     private final Map<String, Long> lastWarned = new ConcurrentHashMap<>();
+    private final Map<String, Long> areaNoticed = new ConcurrentHashMap<>();
     private volatile List<RoadReport> cached = List.of();
     private volatile long cachedAt = 0;
 
@@ -76,19 +89,34 @@ public class HazardAheadService {
         cachedAt = 0;
     }
 
-    /** A hazard was just reported: warn the people heading into it. Returns how many were warned. */
+    /**
+     * A hazard was just reported: tell everyone around it - a warning for
+     * the people heading into it, a note for everyone else within their
+     * radius. Returns how many people were told.
+     */
     public int warnAboutNewReport(RoadReport report) {
         try {
             refreshSoon(); // the new report must be in the next check's list
             if (report == null || report.getLatitude() == null || report.getLongitude() == null) return 0;
             LocalDateTime now = LocalDateTime.now();
             if (!report.isActiveAt(now)) return 0;
-            int warned = 0;
-            for (Vehicle v : vehicleRepository.findByStatus(VehicleStatus.ACTIVE)) {
-                if (!canReceive(v, now) || isReporter(v, report)) continue;
-                if (warnIfRelevant(v, report, now)) warned++;
+            int told = 0;
+            for (Vehicle v : LiveRecipients.latestPerOwner(vehicleRepository.findByStatus(VehicleStatus.ACTIVE),
+                    x -> canReceive(x, now))) {
+                if (isReporter(v, report)) continue;
+                double d = GeoUtil.distanceMeters(v.getCurrentLatitude(), v.getCurrentLongitude(),
+                        report.getLatitude(), report.getLongitude());
+                if (relevant(v, report, d)) {
+                    // In their path: the safety warning, whatever their settings.
+                    if (warnIfRelevant(v, report, now)) {
+                        firstAreaNotice(v, report); // no second, calmer note about it
+                        told++;
+                    }
+                } else if (tellAboutNewReport(v, report, d, now)) {
+                    told++;
+                }
             }
-            return warned;
+            return told;
         } catch (RuntimeException e) {
             log.warn("Couldn't send hazard warnings for report {}: {}", report != null ? report.getId() : null, e.getMessage());
             return 0;
@@ -132,7 +160,36 @@ public class HazardAheadService {
                 + " - reported " + ago(r.getTimestamp(), now) + confirmed(r) + ". " + advice(r.getType(), v.effectiveTravelMode());
         RiskLevel level = r.getType() == ReportType.ACCIDENT || r.getType() == ReportType.EMERGENCY ? RiskLevel.HIGH : RiskLevel.MEDIUM;
         alertService.raise(v, v.getOwner(), AlertType.NEARBY_HAZARD, level,
-                TrafficRuleService.truncate(message, 290), r.getLatitude(), r.getLongitude());
+                TrafficRuleService.truncate(message, 290), r.getLatitude(), r.getLongitude(), r.getId(), null);
+        return true;
+    }
+
+    /**
+     * "Hazard reported nearby: Pothole, 1.2 km to the north-east - reported
+     * just now. Take care if you go that way." - for people within their
+     * radius who aren't heading into it (and haven't turned these off).
+     */
+    private boolean tellAboutNewReport(Vehicle v, RoadReport r, double d, LocalDateTime now) {
+        User owner = v.getOwner();
+        if (!NotificationPrefs.hazards(owner) || d > NotificationPrefs.radiusMeters(owner)) return false;
+        if (!firstAreaNotice(v, r)) return false;
+        String where = NearbyDangerService.describe(v, r.getLatitude(), r.getLongitude(), d, null);
+        String message = HEADLINE_REPORTED + ": " + label(r) + ", " + where
+                + " - reported " + ago(r.getTimestamp(), now) + confirmed(r) + ". " + adviceIfPassing(r.getType());
+        RiskLevel level = r.getType() == ReportType.ACCIDENT || r.getType() == ReportType.EMERGENCY ? RiskLevel.MEDIUM : RiskLevel.LOW;
+        alertService.raise(v, owner, AlertType.NEARBY_HAZARD, level,
+                TrafficRuleService.truncate(message, 290), r.getLatitude(), r.getLongitude(), r.getId(), null);
+        return true;
+    }
+
+    /** True the first time this person is told about report `r` "in their area" (and remembers it). */
+    private boolean firstAreaNotice(Vehicle v, RoadReport r) {
+        String key = v.getOwner().getId() + ":" + r.getId();
+        long now = System.currentTimeMillis();
+        Long last = areaNoticed.get(key);
+        if (last != null && now - last < AREA_REPEAT_MS) return false;
+        areaNoticed.put(key, now);
+        if (areaNoticed.size() > 5000) areaNoticed.values().removeIf(t -> now - t > AREA_REPEAT_MS);
         return true;
     }
 
@@ -215,6 +272,17 @@ public class HazardAheadService {
         int yes = r.getConfirmations() != null ? r.getConfirmations() : 0;
         if (yes <= 0) return "";
         return String.format(Locale.ROOT, ", confirmed by %d %s", yes, yes == 1 ? "person" : "people");
+    }
+
+    /** For a report that isn't in your path (yet). */
+    static String adviceIfPassing(ReportType type) {
+        if (type == null) return "Take care if you go that way.";
+        return switch (type) {
+            case ACCIDENT -> "Keep clear if you go that way.";
+            case TRAFFIC_JAM -> "Expect a delay that way.";
+            case EMERGENCY -> "Make way if you go that way.";
+            default -> "Take care if you go that way.";
+        };
     }
 
     static String advice(ReportType type, TravelMode mode) {

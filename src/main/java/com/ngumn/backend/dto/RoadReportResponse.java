@@ -18,6 +18,10 @@ import java.time.LocalDateTime;
  * itself (expiresAt) or why it ended (endReason: EXPIRED, CLEARED,
  * REJECTED), plus the one-tap feedback - how many found it helpful and
  * said it's not there anymore, and whether the person asking did.
+ *
+ * Reactions, Facebook-style: likeCount (the same as helpfulCount - a like
+ * is "helpful"), dislikeCount, myReaction ("LIKE", "DISLIKE" or null) and
+ * commentCount. helpfulCount / helpfulByMe stay for older apps.
  */
 @Data
 @AllArgsConstructor
@@ -46,6 +50,10 @@ public class RoadReportResponse {
     private Boolean helpfulByMe;
     private Integer goneCount;
     private Boolean goneByMe;
+    private Integer likeCount;
+    private Integer dislikeCount;
+    private String myReaction;
+    private Integer commentCount;
 
     public static RoadReportResponse from(RoadReport r) {
         return from(r, null, null, null, false, false, LocalDateTime.now());
@@ -57,6 +65,12 @@ public class RoadReportResponse {
 
     public static RoadReportResponse from(RoadReport r, Integer reporterTrust, Integer confirmationsNeeded, Boolean myVote,
                                           boolean helpfulByMe, boolean goneByMe, LocalDateTime now) {
+        return from(r, reporterTrust, confirmationsNeeded, myVote, helpfulByMe, false, goneByMe, now);
+    }
+
+    public static RoadReportResponse from(RoadReport r, Integer reporterTrust, Integer confirmationsNeeded, Boolean myVote,
+                                          boolean likedByMe, boolean dislikedByMe, boolean goneByMe, LocalDateTime now) {
+        int likes = r.getHelpfulCount() != null ? r.getHelpfulCount() : 0;
         return new RoadReportResponse(
                 r.getId(), r.getType(), r.getDescription(), r.getLatitude(), r.getLongitude(),
                 r.getImageUrl(), r.getStatus(),
@@ -73,10 +87,14 @@ public class RoadReportResponse {
                 r.effectiveExpiresAt(),
                 r.getClearedAt(),
                 r.endReasonAt(now),
-                r.getHelpfulCount() != null ? r.getHelpfulCount() : 0,
-                helpfulByMe,
+                likes,
+                likedByMe,
                 r.getGoneCount() != null ? r.getGoneCount() : 0,
-                goneByMe
+                goneByMe,
+                likes,
+                r.getDislikeCount() != null ? r.getDislikeCount() : 0,
+                likedByMe ? "LIKE" : dislikedByMe ? "DISLIKE" : null,
+                r.getCommentCount() != null ? r.getCommentCount() : 0
         );
     }
 }

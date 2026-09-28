@@ -43,6 +43,14 @@ public class Alert {
 
     private Double longitude;
 
+    /** The hazard report this alert is about, if any - lets the app open it, and like or comment from the notification. */
+    @Column(name = "report_id")
+    private Long reportId;
+
+    /** The rule-breaker report this alert is about, if any. */
+    @Column(name = "complaint_id")
+    private Long complaintId;
+
     @Column(nullable = false)
     @Builder.Default
     private Boolean acknowledged = false;

@@ -74,13 +74,21 @@ public class RoadReport {
     @Column(length = 20, columnDefinition = "varchar(20)")
     private String clearedBy;
 
-    /** People who marked it helpful (the heart). */
+    /** People who liked it (thumbs up - "helpful"). */
     @Builder.Default
     private Integer helpfulCount = 0;
 
     /** People who said "not there anymore". */
     @Builder.Default
     private Integer goneCount = 0;
+
+    /** People who disliked it (thumbs down). Nullable so Hibernate can add it to an existing table. */
+    @Builder.Default
+    private Integer dislikeCount = 0;
+
+    /** Comments on it. Nullable so Hibernate can add it to an existing table. */
+    @Builder.Default
+    private Integer commentCount = 0;
 
     @PrePersist
     protected void onCreate() {
@@ -90,6 +98,8 @@ public class RoadReport {
         if (this.denials == null) this.denials = 0;
         if (this.helpfulCount == null) this.helpfulCount = 0;
         if (this.goneCount == null) this.goneCount = 0;
+        if (this.dislikeCount == null) this.dislikeCount = 0;
+        if (this.commentCount == null) this.commentCount = 0;
         if (this.expiresAt == null) this.expiresAt = this.timestamp.plus(ReportLifetime.of(this.type, this.description));
     }
 

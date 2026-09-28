@@ -1,13 +1,18 @@
 package com.ngumn.backend.controller;
 
+import com.ngumn.backend.dto.CommentRequest;
+import com.ngumn.backend.dto.CommentResponse;
+import com.ngumn.backend.dto.ReactionRequest;
 import com.ngumn.backend.dto.ReportStatusUpdateRequest;
 import com.ngumn.backend.dto.RoadReportRequest;
 import com.ngumn.backend.dto.RoadReportResponse;
 import com.ngumn.backend.dto.VoteRequest;
 import com.ngumn.backend.entity.Role;
 import com.ngumn.backend.entity.User;
+import com.ngumn.backend.entity.VoteTarget;
 import com.ngumn.backend.exception.ApiException;
 import com.ngumn.backend.service.AuthService;
+import com.ngumn.backend.service.CommentService;
 import com.ngumn.backend.service.CommunityService;
 import com.ngumn.backend.service.ReportFeedbackService;
 import com.ngumn.backend.service.RoadReportService;
@@ -24,13 +29,16 @@ public class RoadReportController {
     private final RoadReportService roadReportService;
     private final CommunityService communityService;
     private final ReportFeedbackService feedbackService;
+    private final CommentService commentService;
     private final AuthService authService;
 
     public RoadReportController(RoadReportService roadReportService, CommunityService communityService,
-                                ReportFeedbackService feedbackService, AuthService authService) {
+                                ReportFeedbackService feedbackService, CommentService commentService,
+                                AuthService authService) {
         this.roadReportService = roadReportService;
         this.communityService = communityService;
         this.feedbackService = feedbackService;
+        this.commentService = commentService;
         this.authService = authService;
     }
 
@@ -69,7 +77,40 @@ public class RoadReportController {
         return ResponseEntity.ok(communityService.voteOnReport(user, id, request));
     }
 
-    /** "Helpful" - one tap on someone else's report. */
+    /** One report by id - e.g. opened from a notification (also once it has cleared). */
+    @GetMapping("/{id}")
+    public ResponseEntity<RoadReportResponse> one(@RequestHeader("Authorization") String authorization,
+                                                  @PathVariable Long id) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(communityService.report(user, id));
+    }
+
+    /** Like / dislike someone else's report, or take it back: {"reaction": "LIKE" | "DISLIKE" | "NONE"}. */
+    @PostMapping("/{id}/reaction")
+    public ResponseEntity<RoadReportResponse> react(@RequestHeader("Authorization") String authorization,
+                                                    @PathVariable Long id,
+                                                    @RequestBody ReactionRequest request) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(feedbackService.reactToReport(user, id, request.getReaction()));
+    }
+
+    /** Comments on a report, oldest first. */
+    @GetMapping("/{id}/comments")
+    public ResponseEntity<List<CommentResponse>> comments(@RequestHeader("Authorization") String authorization,
+                                                          @PathVariable Long id) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(commentService.list(user, VoteTarget.REPORT, id));
+    }
+
+    @PostMapping("/{id}/comments")
+    public ResponseEntity<CommentResponse> comment(@RequestHeader("Authorization") String authorization,
+                                                   @PathVariable Long id,
+                                                   @Valid @RequestBody CommentRequest request) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(commentService.add(user, VoteTarget.REPORT, id, request.getText()));
+    }
+
+    /** "Helpful" - older apps' like. */
     @PostMapping("/{id}/helpful")
     public ResponseEntity<RoadReportResponse> markHelpful(@RequestHeader("Authorization") String authorization,
                                                           @PathVariable Long id) {

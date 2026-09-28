@@ -3,6 +3,10 @@ package com.ngumn.backend.repository;
 import com.ngumn.backend.entity.RoadReport;
 import com.ngumn.backend.entity.ReportStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -16,6 +20,17 @@ public interface RoadReportRepository extends JpaRepository<RoadReport, Long> {
     List<RoadReport> findByStatusAndTimestampAfter(ReportStatus status, LocalDateTime after);
     long countByReporterIdAndStatus(Long reporterId, ReportStatus status);
     List<RoadReport> findByExpiresAtIsNull();
+
+    /**
+     * Stores just the comment count. Saving the whole report instead could
+     * undo a vote or a "not there anymore" made at the same moment (it
+     * would write back the older copy of the report the comment started
+     * with).
+     */
+    @Modifying
+    @Transactional
+    @Query("update RoadReport r set r.commentCount = :newCount where r.id = :id")
+    int updateCommentCount(@Param("id") Long id, @Param("newCount") Integer newCount);
 
     List<RoadReport> findByStatusNotAndClearedAtIsNullAndExpiresAtAfterOrderByTimestampDesc(ReportStatus status,
                                                                                           LocalDateTime now);

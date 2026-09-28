@@ -1,10 +1,15 @@
 package com.ngumn.backend.controller;
 
+import com.ngumn.backend.dto.CommentRequest;
+import com.ngumn.backend.dto.CommentResponse;
 import com.ngumn.backend.dto.ComplaintRequest;
 import com.ngumn.backend.dto.ComplaintResponse;
+import com.ngumn.backend.dto.ReactionRequest;
 import com.ngumn.backend.dto.VoteRequest;
 import com.ngumn.backend.entity.User;
+import com.ngumn.backend.entity.VoteTarget;
 import com.ngumn.backend.service.AuthService;
+import com.ngumn.backend.service.CommentService;
 import com.ngumn.backend.service.CommunityService;
 import com.ngumn.backend.service.ReportFeedbackService;
 import jakarta.validation.Valid;
@@ -23,13 +28,48 @@ public class ComplaintController {
 
     private final CommunityService communityService;
     private final ReportFeedbackService feedbackService;
+    private final CommentService commentService;
     private final AuthService authService;
 
     public ComplaintController(CommunityService communityService, ReportFeedbackService feedbackService,
-                               AuthService authService) {
+                               CommentService commentService, AuthService authService) {
         this.communityService = communityService;
         this.feedbackService = feedbackService;
+        this.commentService = commentService;
         this.authService = authService;
+    }
+
+    /** One rule-breaker report by id - e.g. opened from a notification. */
+    @GetMapping("/{id}")
+    public ResponseEntity<ComplaintResponse> one(@RequestHeader("Authorization") String authorization,
+                                                 @PathVariable Long id) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(communityService.complaint(user, id));
+    }
+
+    /** Like / dislike a rule-breaker report, or take it back: {"reaction": "LIKE" | "DISLIKE" | "NONE"}. */
+    @PostMapping("/{id}/reaction")
+    public ResponseEntity<ComplaintResponse> react(@RequestHeader("Authorization") String authorization,
+                                                   @PathVariable Long id,
+                                                   @RequestBody ReactionRequest request) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(feedbackService.reactToComplaint(user, id, request.getReaction()));
+    }
+
+    /** Comments on a rule-breaker report, oldest first. */
+    @GetMapping("/{id}/comments")
+    public ResponseEntity<List<CommentResponse>> comments(@RequestHeader("Authorization") String authorization,
+                                                          @PathVariable Long id) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(commentService.list(user, VoteTarget.COMPLAINT, id));
+    }
+
+    @PostMapping("/{id}/comments")
+    public ResponseEntity<CommentResponse> comment(@RequestHeader("Authorization") String authorization,
+                                                   @PathVariable Long id,
+                                                   @Valid @RequestBody CommentRequest request) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(commentService.add(user, VoteTarget.COMPLAINT, id, request.getText()));
     }
 
     @PostMapping

@@ -15,6 +15,9 @@ import java.time.LocalDateTime;
  * the caller's own vote, and how many people found it helpful (helpfulByMe:
  * whether the caller did). accusedIsMe tells the owner of the reported
  * vehicle that it's about them (they can't vote on it).
+ *
+ * Reactions, Facebook-style: likeCount (= helpfulCount), dislikeCount,
+ * myReaction ("LIKE", "DISLIKE" or null) and commentCount.
  */
 @Data
 @AllArgsConstructor
@@ -42,6 +45,10 @@ public class ComplaintResponse {
     private Boolean helpfulByMe;
     /** The reported NGUMN vehicle in words - "A car (AP 16 BX 2231)" - for display instead of its internal code. */
     private String accusedVehicleLabel;
+    private Integer likeCount;
+    private Integer dislikeCount;
+    private String myReaction;
+    private Integer commentCount;
 
     public static ComplaintResponse from(ViolationComplaint c, Integer reporterTrust, Integer confirmationsNeeded,
                                          Boolean myVote, Long viewerId) {
@@ -50,6 +57,12 @@ public class ComplaintResponse {
 
     public static ComplaintResponse from(ViolationComplaint c, Integer reporterTrust, Integer confirmationsNeeded,
                                          Boolean myVote, Long viewerId, boolean helpfulByMe) {
+        return from(c, reporterTrust, confirmationsNeeded, myVote, viewerId, helpfulByMe, false);
+    }
+
+    public static ComplaintResponse from(ViolationComplaint c, Integer reporterTrust, Integer confirmationsNeeded,
+                                         Boolean myVote, Long viewerId, boolean likedByMe, boolean dislikedByMe) {
+        int likes = c.getHelpfulCount() != null ? c.getHelpfulCount() : 0;
         boolean accusedIsMe = viewerId != null && c.getAccusedVehicle() != null
                 && c.getAccusedVehicle().getOwner() != null
                 && viewerId.equals(c.getAccusedVehicle().getOwner().getId());
@@ -73,9 +86,13 @@ public class ComplaintResponse {
                 c.getDenials() != null ? c.getDenials() : 0,
                 confirmationsNeeded, myVote, accusedIsMe,
                 c.getCreatedAt(), c.getDecidedAt(),
-                c.getHelpfulCount() != null ? c.getHelpfulCount() : 0,
-                helpfulByMe,
-                c.getAccusedVehicle() != null ? VehicleLabels.describeCapitalised(c.getAccusedVehicle()) : null
+                likes,
+                likedByMe,
+                c.getAccusedVehicle() != null ? VehicleLabels.describeCapitalised(c.getAccusedVehicle()) : null,
+                likes,
+                c.getDislikeCount() != null ? c.getDislikeCount() : 0,
+                likedByMe ? "LIKE" : dislikedByMe ? "DISLIKE" : null,
+                c.getCommentCount() != null ? c.getCommentCount() : 0
         );
     }
 }

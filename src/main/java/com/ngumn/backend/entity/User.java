@@ -44,6 +44,22 @@ public class User {
     @Builder.Default
     private Boolean active = true;
 
+    // What this person wants to be told about in the area around them
+    // (Settings > Notifications in the app). Empty = the defaults: everything
+    // within 2 km - see NotificationPrefs.
+
+    /** Tell me about new reports and rule-breakers within this many metres. */
+    @Column(name = "alert_radius_m")
+    private Integer alertRadiusM;
+
+    /** Tell me when someone reports a hazard near me. */
+    @Column(name = "notify_hazards")
+    private Boolean notifyHazards;
+
+    /** Tell me when someone near me breaks a road rule or is reported for one. */
+    @Column(name = "notify_rule_breakers")
+    private Boolean notifyRuleBreakers;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

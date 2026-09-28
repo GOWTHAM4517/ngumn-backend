@@ -102,6 +102,7 @@ public class CommunityService {
     public List<RoadReportResponse> describeReports(User viewer, List<RoadReport> reports) {
         Map<Long, Boolean> myVotes = votesBy(viewer, VoteTarget.REPORT);
         Set<Long> myHelpful = feedbackBy(viewer, VoteTarget.REPORT, FeedbackKind.HELPFUL);
+        Set<Long> myDislikes = feedbackBy(viewer, VoteTarget.REPORT, FeedbackKind.DISLIKE);
         Set<Long> myGone = feedbackBy(viewer, VoteTarget.REPORT, FeedbackKind.GONE);
         Map<Long, TrustResponse> trustCache = new HashMap<>();
         LocalDateTime now = LocalDateTime.now();
@@ -115,6 +116,7 @@ public class CommunityService {
                     trust != null ? trust.getConfirmationsNeeded() : CONFIRMATIONS_NEEDED,
                     myVotes.get(r.getId()),
                     myHelpful.contains(r.getId()),
+                    myDislikes.contains(r.getId()),
                     myGone.contains(r.getId()),
                     now));
         }
@@ -199,7 +201,7 @@ public class CommunityService {
                 .build());
         webSocketHandler.broadcast("COMPLAINT", Map.of("id", complaint.getId()));
         try {
-            // Speeding / wrong-way / rash driver: warn the drivers around it now.
+            // Tell the people around it now (a warning if it's dangerous driving coming their way).
             nearbyDangerService.warnAboutReport(complaint);
         } catch (RuntimeException e) {
             // Best effort - the report itself is already saved.
@@ -236,6 +238,7 @@ public class CommunityService {
     public List<ComplaintResponse> describeComplaints(User viewer, List<ViolationComplaint> complaints) {
         Map<Long, Boolean> myVotes = votesBy(viewer, VoteTarget.COMPLAINT);
         Set<Long> myHelpful = feedbackBy(viewer, VoteTarget.COMPLAINT, FeedbackKind.HELPFUL);
+        Set<Long> myDislikes = feedbackBy(viewer, VoteTarget.COMPLAINT, FeedbackKind.DISLIKE);
         Map<Long, TrustResponse> trustCache = new HashMap<>();
         List<ComplaintResponse> out = new ArrayList<>();
         for (ViolationComplaint c : complaints) {
@@ -247,13 +250,26 @@ public class CommunityService {
                     trust != null ? trust.getConfirmationsNeeded() : CONFIRMATIONS_NEEDED,
                     myVotes.get(c.getId()),
                     viewer != null ? viewer.getId() : null,
-                    myHelpful.contains(c.getId())));
+                    myHelpful.contains(c.getId()),
+                    myDislikes.contains(c.getId())));
         }
         return out;
     }
 
     public ComplaintResponse describeComplaint(User viewer, ViolationComplaint complaint) {
         return describeComplaints(viewer, List.of(complaint)).get(0);
+    }
+
+    /** One rule-breaker report by id - e.g. opened from a notification. */
+    public ComplaintResponse complaint(User viewer, Long id) {
+        return describeComplaint(viewer, complaintRepository.findById(id)
+                .orElseThrow(() -> ApiException.notFound("Report not found")));
+    }
+
+    /** One hazard report by id (also after it has cleared) - e.g. opened from a notification. */
+    public RoadReportResponse report(User viewer, Long id) {
+        return describeReport(viewer, roadReportRepository.findById(id)
+                .orElseThrow(() -> ApiException.notFound("Report not found")));
     }
 
     public synchronized ComplaintResponse voteOnComplaint(User voter, Long complaintId, VoteRequest request) {

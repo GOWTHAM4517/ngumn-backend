@@ -34,6 +34,12 @@ public class AlertService {
 
     public Alert raise(Vehicle vehicle, User user, AlertType type, RiskLevel level, String message,
                         Double lat, Double lon) {
+        return raise(vehicle, user, type, level, message, lat, lon, null, null);
+    }
+
+    /** An alert about a particular hazard report or rule-breaker report (either id may be null). */
+    public Alert raise(Vehicle vehicle, User user, AlertType type, RiskLevel level, String message,
+                        Double lat, Double lon, Long reportId, Long complaintId) {
         Alert alert = Alert.builder()
                 .vehicle(vehicle)
                 .user(user)
@@ -42,6 +48,8 @@ public class AlertService {
                 .message(message)
                 .latitude(lat)
                 .longitude(lon)
+                .reportId(reportId)
+                .complaintId(complaintId)
                 .acknowledged(false)
                 .build();
         alert = alertRepository.save(alert);
@@ -92,6 +100,19 @@ public class AlertService {
     public List<AlertResponse> forUser(User user) {
         return alertRepository.findTop100ByUserIdOrderByCreatedAtDesc(user.getId()).stream()
                 .map(AlertResponse::from).collect(Collectors.toList());
+    }
+
+    /**
+     * This person's alerts newer than `afterId` (at most 20), newest first -
+     * a light check the app makes every few seconds while it's in the
+     * background, so it can show a notification as soon as something new
+     * arrives.
+     */
+    public List<AlertResponse> forUserAfter(User user, long afterId) {
+        List<AlertResponse> newer = alertRepository.findTop20ByUserIdAndIdGreaterThanOrderByIdAsc(user.getId(), afterId).stream()
+                .map(AlertResponse::from).collect(Collectors.toList());
+        java.util.Collections.reverse(newer);
+        return newer;
     }
 
     public AlertResponse acknowledge(Long alertId) {
