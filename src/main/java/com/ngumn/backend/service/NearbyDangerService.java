@@ -182,7 +182,7 @@ public class NearbyDangerService {
         double lat = complaint.getLatitude();
         double lng = complaint.getLongitude();
         Double heading = null;
-        // Use where the reported NGUMN vehicle is now, if we know it.
+        // Use where the reported Raksio vehicle is now, if we know it.
         if (accused != null && isFresh(accused)) {
             lat = accused.getCurrentLatitude();
             lng = accused.getCurrentLongitude();

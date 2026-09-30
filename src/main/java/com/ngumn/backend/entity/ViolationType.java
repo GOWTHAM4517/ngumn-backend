@@ -1,7 +1,7 @@
 package com.ngumn.backend.entity;
 
 /**
- * Traffic-rule violations NGUMN knows about. The first four can be
+ * Traffic-rule violations Raksio knows about. The first four can be
  * detected automatically (by the server's RuleMonitorService from live
  * location, or by Drive Guard on the driver's phone); every type can be
  * reported by other road users as a complaint and confirmed by the

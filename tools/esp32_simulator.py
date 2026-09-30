@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-NGUMN ESP32 simulator.
+Raksio ESP32 simulator.
 
 This script is a SOFTWARE STAND-IN for a real ESP32 + GPS module. It
 publishes the exact same MQTT payload shape that real ESP32 firmware
 would, to the same topic (`ngumn/vehicle/{vehicleCode}/location`), so
-the NGUMN backend's MQTT bridge can be demonstrated end-to-end without
+the Raksio backend's MQTT bridge can be demonstrated end-to-end without
 physical hardware.
 
 It is clearly a simulator, not firmware - it is documented as such
@@ -22,7 +22,7 @@ Usage:
     python3 esp32_simulator.py --vehicle-code DEMO-ESP32-1 \
         --broker tcp://localhost:1883 --lat 17.3850 --lon 78.4867
 
-The vehicle code must already exist in the NGUMN database (register a
+The vehicle code must already exist in the Raksio database (register a
 vehicle via the app or API first, and use its `vehicleCode`) - the
 backend looks up the vehicle by code on each incoming message and
 updates its position, exactly like a real device would.

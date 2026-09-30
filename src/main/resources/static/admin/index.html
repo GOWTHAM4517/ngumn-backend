@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>NGUMN Admin Dashboard</title>
+<title>Raksio Admin Dashboard</title>
 <style>
   :root {
     --bg: #07111F;
@@ -86,6 +86,9 @@
   .actions { display: flex; gap: 8px; }
   .empty { color: #5A6B80; font-size: 12px; }
 
+  .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0 12px; }
+  .form-grid label { margin-top: 10px; }
+  .ok { color: var(--green); font-size: 12px; margin-top: 10px; }
   .disclaimer {
     background: #241705; border: 1px solid #4A3410; color: var(--amber);
     border-radius: 12px; padding: 12px 14px; font-size: 11px; line-height: 1.5; margin-bottom: 20px;
@@ -97,8 +100,8 @@
 
   <!-- LOGIN -->
   <div id="loginCard">
-    <h2>NGUMN Admin</h2>
-    <p>Sign in with any NGUMN account. Report verification requires an ADMIN-role account
+    <h2>Raksio Admin</h2>
+    <p>Sign in with any Raksio account. Report verification requires an ADMIN-role account
        (the seeded default is <code>admin@ngumn.local</code> / <code>admin123</code>) — other
        accounts can view live data read-only.</p>
     <label>Backend URL</label>
@@ -115,7 +118,7 @@
   <div id="dashboard">
     <header>
       <div>
-        <h1>NGUMN <span>Admin</span></h1>
+        <h1>Raksio <span>Admin</span></h1>
         <div class="sub" id="whoami"></div>
       </div>
       <div style="display:flex; align-items:center; gap:16px;">
@@ -131,6 +134,31 @@
     </div>
 
     <div class="tiles" id="tiles"></div>
+
+    <section id="respondersSection">
+      <h2>Responders — police, ambulance &amp; departments <span class="badge" id="responderCount">0</span></h2>
+      <div class="sub" style="margin:-6px 0 12px">Only accounts made here can see and accept help requests in the app (sign-up always makes a citizen account, so nobody can pose as police). Use an email that already has an account to turn it into a responder.</div>
+      <div class="tiles" id="helpTiles" style="margin-bottom:14px"></div>
+      <div class="card-row" style="display:block">
+        <div class="form-grid">
+          <div><label for="rName">NAME</label><input id="rName" placeholder="Officer Ramesh" /></div>
+          <div><label for="rEmail">EMAIL (THEIR LOGIN)</label><input id="rEmail" type="email" placeholder="benzcircle.police@raksio.in" /></div>
+          <div><label for="rPassword">PASSWORD</label><input id="rPassword" type="password" placeholder="at least 6 characters" /></div>
+          <div><label for="rTeam">TEAM</label>
+            <select id="rTeam">
+              <option value="POLICE">Police</option>
+              <option value="AMBULANCE">Ambulance</option>
+              <option value="MUNICIPAL">Municipality</option>
+              <option value="ELECTRICITY">Electricity</option>
+            </select>
+          </div>
+          <div><label for="rUnit">UNIT (SHOWN TO PEOPLE)</label><input id="rUnit" placeholder="Traffic Police - Benz Circle" /></div>
+        </div>
+        <button id="rSave" style="margin-top:14px">Save responder</button>
+        <div id="rMsg"></div>
+      </div>
+      <div id="respondersList"><div class="empty">Loading…</div></div>
+    </section>
 
     <section>
       <h2>Hazard Reports Awaiting Community Votes <span class="badge" id="pendingCount">0</span></h2>
@@ -297,6 +325,7 @@
 
   function loadAll() {
     loadSummary();
+    loadResponders();
     loadReports();
     loadEmergencies();
     loadAlerts();
@@ -483,6 +512,81 @@
       els.violationsList.innerHTML = '<div class="empty">Could not load violations: ' + escapeHtml(e.message) + '</div>';
     });
   }
+
+  // ---------------------------------------------------------------- responders
+  var TEAM_LABELS = { POLICE: 'Police', AMBULANCE: 'Ambulance', MUNICIPAL: 'Municipality', ELECTRICITY: 'Electricity' };
+
+  function loadResponders() {
+    var list = document.getElementById('respondersList');
+    if (state.user.role !== 'ADMIN') {
+      list.innerHTML = '<div class="empty">Sign in with an ADMIN account to manage responders.</div>';
+      return;
+    }
+    api('/api/admin/incidents/open').then(function (counts) {
+      document.getElementById('helpTiles').innerHTML = Object.keys(counts).map(function (t) {
+        return tile(counts[t], 'Help requests waiting · ' + (TEAM_LABELS[t] || t));
+      }).join('');
+    }).catch(function () {});
+    api('/api/admin/responders').then(function (rows) {
+      document.getElementById('responderCount').textContent = rows.length;
+      if (rows.length === 0) {
+        list.innerHTML = '<div class="empty">No responder accounts yet. Add one above - e.g. "Traffic Police - Benz Circle".</div>';
+        return;
+      }
+      list.innerHTML = rows.map(function (r) {
+        return (
+          '<div class="card-row">' +
+            '<div class="main">' +
+              '<div class="title">' + escapeHtml(r.unitName || r.name) + '<span class="tag community">' + escapeHtml(r.teamLabel) + '</span></div>' +
+              '<div class="meta">' + escapeHtml(r.name) + ' · ' + escapeHtml(r.email) + '</div>' +
+            '</div>' +
+            '<div class="actions"><button class="secondary" data-remove="' + r.id + '">Make citizen</button></div>' +
+          '</div>'
+        );
+      }).join('');
+      list.querySelectorAll('[data-remove]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          if (!confirm('Turn this back into a normal citizen account?')) return;
+          api('/api/admin/responders/' + btn.getAttribute('data-remove'), { method: 'DELETE' })
+            .then(loadResponders)
+            .catch(function (e) { alert('Could not change it: ' + e.message); });
+        });
+      });
+    }).catch(function (e) {
+      list.innerHTML = '<div class="empty">Could not load responders: ' + escapeHtml(e.message) + '</div>';
+    });
+  }
+
+  document.getElementById('rSave').addEventListener('click', function () {
+    var msg = document.getElementById('rMsg');
+    var body = {
+      name: document.getElementById('rName').value.trim(),
+      email: document.getElementById('rEmail').value.trim(),
+      password: document.getElementById('rPassword').value || null,
+      team: document.getElementById('rTeam').value,
+      unitName: document.getElementById('rUnit').value.trim(),
+    };
+    msg.className = '';
+    msg.textContent = '';
+    if (!body.name || !body.email || !body.unitName) {
+      msg.className = 'error';
+      msg.textContent = 'Fill in name, email and unit.';
+      return;
+    }
+    api('/api/admin/responders', { method: 'POST', body: body })
+      .then(function (r) {
+        msg.className = 'ok';
+        msg.textContent = (r.created ? 'Created ' : 'Updated ') + r.unitName + ' (' + r.teamLabel + '). They sign in to the Raksio app with ' + r.email + '.';
+        ['rName', 'rEmail', 'rPassword', 'rUnit'].forEach(function (id) { document.getElementById(id).value = ''; });
+        loadResponders();
+      })
+      .catch(function (e) {
+        msg.className = 'error';
+        var text = e.message.replace(/^HTTP \d+: /, '');
+        try { var j = JSON.parse(text); text = j.message || (j.errors && j.errors.join(', ')) || text; } catch (_) {}
+        msg.textContent = text;
+      });
+  });
 
   function escapeHtml(str) {
     return String(str == null ? '' : str).replace(/[&<>"']/g, function (c) {

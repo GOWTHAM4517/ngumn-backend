@@ -22,7 +22,7 @@ import java.util.*;
  * - 👍 Like = "it's true". LIKES_TO_TRUST likes (and more likes than
  *   dislikes) make a report trusted (VERIFIED): the reporter earns
  *   REPORTER_POINTS and everyone who liked it VOTER_POINTS. For a
- *   rule-breaker report about an NGUMN vehicle, its driver is alerted and
+ *   rule-breaker report about a Raksio vehicle, its driver is alerted and
  *   the violation goes on their driving record.
  * - 👎 Dislike = "it's wrong". More than two dislikes (DISLIKES_TO_REMOVE,
  *   and more dislikes than likes) take it down (REJECTED): the reporter
@@ -296,7 +296,7 @@ public class CommunityService {
 
     /**
      * Decides a rule-breaker report from its likes and dislikes (once - see
-     * the class comment). A trusted one about an NGUMN vehicle goes on its
+     * the class comment). A trusted one about a Raksio vehicle goes on its
      * driver's record, and they're alerted. Returns the report as saved.
      */
     public ViolationComplaint settleComplaint(ViolationComplaint complaint) {

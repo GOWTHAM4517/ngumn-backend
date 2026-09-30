@@ -56,7 +56,7 @@ public class DataSeeder implements CommandLineRunner {
         if (userRepository.findByEmail(adminEmail.toLowerCase()).isEmpty()) {
             String salt = PasswordUtil.generateSalt();
             User admin = User.builder()
-                    .name("NGUMN Admin")
+                    .name("Raksio Admin")
                     .email(adminEmail.toLowerCase())
                     .passwordHash(PasswordUtil.hash(adminPassword, salt))
                     .passwordSalt(salt)

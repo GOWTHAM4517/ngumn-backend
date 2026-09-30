@@ -51,6 +51,10 @@ public class Alert {
     @Column(name = "complaint_id")
     private Long complaintId;
 
+    /** The help request this alert is about, if any (see Incident) - the app opens it. */
+    @Column(name = "incident_id")
+    private Long incidentId;
+
     @Column(nullable = false)
     @Builder.Default
     private Boolean acknowledged = false;

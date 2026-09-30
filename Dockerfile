@@ -1,4 +1,4 @@
-# Builds and runs the NGUMN backend as a single container, for hosts
+# Builds and runs the Raksio backend as a single container, for hosts
 # (Render, Railway, Fly.io, a VPS, ...) that deploy from a Dockerfile
 # rather than running Maven themselves.
 #

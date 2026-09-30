@@ -11,7 +11,7 @@ import java.time.LocalDateTime;
 /**
  * Simulated Roadside Unit (RSU). For this prototype an RSU is a
  * software node (backend concept) that can be "pinged" to represent a
- * roadside sensor/beacon reporting into NGUMN. No physical government
+ * roadside sensor/beacon reporting into Raksio. No physical government
  * RSU hardware is implied or deployed.
  */
 @Entity

@@ -15,7 +15,7 @@ import java.time.LocalDateTime;
  *
  * There is no admin in the loop: people nearby like it if it's true and
  * dislike it if it's wrong. Enough likes make it trusted - the reporter
- * earns points and, if the vehicle is on NGUMN, its driver is alerted and
+ * earns points and, if the vehicle is on Raksio, its driver is alerted and
  * the violation is added to their driving record. More than two dislikes
  * take it down and cost the reporter points. See CommunityService for the
  * thresholds.
@@ -24,7 +24,7 @@ import java.time.LocalDateTime;
  * after it's made - the vehicle is long gone by then - unless the reporter
  * removes it first, or two people say it's not an issue anymore.
  *
- * The vehicle can be an NGUMN vehicle picked in the app
+ * The vehicle can be a Raksio vehicle picked in the app
  * (accusedVehicle), a typed number plate, or unknown.
  */
 @Entity

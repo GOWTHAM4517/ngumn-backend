@@ -60,6 +60,19 @@ public class User {
     @Column(name = "notify_rule_breakers")
     private Boolean notifyRuleBreakers;
 
+    /**
+     * Police, ambulance, municipality or electricity - set only by an admin
+     * (Admin dashboard > Responders), never at sign-up. Null for citizens.
+     * The app shows responders the help requests for their team.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "responder_team", length = 20, columnDefinition = "varchar(20)")
+    private ResponderTeam responderTeam;
+
+    /** A responder's unit as people see it: "Traffic Police - Benz Circle", "108 Ambulance - Unit 4". */
+    @Column(name = "unit_name", length = 120)
+    private String unitName;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

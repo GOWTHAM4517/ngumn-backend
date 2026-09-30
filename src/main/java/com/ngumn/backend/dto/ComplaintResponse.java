@@ -51,7 +51,7 @@ public class ComplaintResponse {
     private LocalDateTime decidedAt;
     private Integer helpfulCount;
     private Boolean helpfulByMe;
-    /** The reported NGUMN vehicle in words - "A car (AP 16 BX 2231)" - for display instead of its internal code. */
+    /** The reported Raksio vehicle in words - "A car (AP 16 BX 2231)" - for display instead of its internal code. */
     private String accusedVehicleLabel;
     private Integer likeCount;
     private Integer dislikeCount;

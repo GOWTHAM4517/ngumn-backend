@@ -81,7 +81,8 @@ public class AuthService {
                 .build();
         authTokenRepository.save(authToken);
 
-        return new AuthResponse(token, user.getId(), user.getName(), user.getEmail(), user.getRole(), user.getRewardPoints());
+        return new AuthResponse(token, user.getId(), user.getName(), user.getEmail(), user.getRole(), user.getRewardPoints(),
+                user.getResponderTeam(), user.getUnitName());
     }
 
     /**

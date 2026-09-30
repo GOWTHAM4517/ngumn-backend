@@ -66,6 +66,28 @@ public class AlertService {
         return alert;
     }
 
+    /**
+     * A note to one person about a help request (see IncidentService): only
+     * they get it. The live channel just says "something new for someone"
+     * - the text isn't sent to everyone connected.
+     */
+    public Alert raiseAboutIncident(User user, AlertType type, RiskLevel level, String message,
+                                    Double lat, Double lon, Long incidentId) {
+        Alert alert = Alert.builder()
+                .user(user)
+                .type(type)
+                .riskLevel(level)
+                .message(message)
+                .latitude(lat)
+                .longitude(lon)
+                .incidentId(incidentId)
+                .acknowledged(false)
+                .build();
+        alert = alertRepository.save(alert);
+        webSocketHandler.broadcast("ALERT", java.util.Map.of("id", alert.getId(), "userId", user.getId()));
+        return alert;
+    }
+
     public List<AlertResponse> recent() {
         return recent(null, null, null);
     }

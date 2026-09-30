@@ -20,7 +20,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * DEMO MODE
  * ---------
  * Simulates multiple moving vehicles, hazards and an emergency-vehicle
- * scenario entirely in software, so the full NGUMN flow can be shown
+ * scenario entirely in software, so the full Raksio flow can be shown
  * without physical vehicles, RSUs, or ESP32 hardware.
  *
  * Every vehicle/report created here has isSimulated=true so simulated
@@ -111,7 +111,7 @@ public class DemoSimulatorService {
         return userRepository.findByEmail(DEMO_USER_EMAIL).orElseGet(() -> {
             String salt = PasswordUtil.generateSalt();
             User user = User.builder()
-                    .name("NGUMN Demo Fleet")
+                    .name("Raksio Demo Fleet")
                     .email(DEMO_USER_EMAIL)
                     .passwordHash(PasswordUtil.hash("demo-not-a-real-login", salt))
                     .passwordSalt(salt)

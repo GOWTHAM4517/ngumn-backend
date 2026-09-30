@@ -7,7 +7,7 @@ import lombok.Data;
 
 /**
  * "Report a rule-breaker" from the app. The vehicle is optional: pick an
- * NGUMN vehicle nearby (accusedVehicleId), type its number plate
+ * Raksio vehicle nearby (accusedVehicleId), type its number plate
  * (plateNumber), or leave both empty if you didn't catch it.
  */
 @Data
