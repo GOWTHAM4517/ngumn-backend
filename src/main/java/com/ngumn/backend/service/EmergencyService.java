@@ -43,6 +43,12 @@ public class EmergencyService {
     public EmergencyEvent start(EmergencyStartRequest request) {
         Vehicle vehicle = vehicleRepository.findById(request.getVehicleId())
                 .orElseThrow(() -> ApiException.notFound("Vehicle not found"));
+        // Already on (a retry after a slow answer, a double tap): the same event - never a second one.
+        // (Demo Mode's sample vehicles still get a fresh one each time it's triggered.)
+        if (!Boolean.TRUE.equals(vehicle.getIsSimulated())) {
+            var running = emergencyEventRepository.findFirstByVehicleIdAndStatus(vehicle.getId(), EmergencyStatus.ACTIVE);
+            if (running.isPresent()) return running.get();
+        }
 
         vehicle.setEmergencyStatus(true);
         vehicle = vehicleRepository.save(vehicle);

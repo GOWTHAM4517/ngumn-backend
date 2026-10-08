@@ -90,6 +90,15 @@ public class RoadReport {
     @Builder.Default
     private Integer commentCount = 0;
 
+    /**
+     * How many people reported this spot: the first reporter plus everyone
+     * whose report of the same thing here was added to this one (see
+     * RoadReportService.submit). Nullable so Hibernate can add it to an
+     * existing table - older rows read as 1.
+     */
+    @Builder.Default
+    private Integer reportCount = 1;
+
     @PrePersist
     protected void onCreate() {
         if (this.timestamp == null) this.timestamp = LocalDateTime.now();
@@ -100,6 +109,7 @@ public class RoadReport {
         if (this.goneCount == null) this.goneCount = 0;
         if (this.dislikeCount == null) this.dislikeCount = 0;
         if (this.commentCount == null) this.commentCount = 0;
+        if (this.reportCount == null) this.reportCount = 1;
         if (this.expiresAt == null) this.expiresAt = this.timestamp.plus(ReportLifetime.of(this.type, this.description));
     }
 
@@ -108,6 +118,11 @@ public class RoadReport {
         if (expiresAt != null) return expiresAt;
         LocalDateTime made = timestamp != null ? timestamp : LocalDateTime.now();
         return made.plus(ReportLifetime.of(type, description));
+    }
+
+    /** People who reported this spot (at least 1 - older rows have no count). */
+    public int reporters() {
+        return reportCount != null && reportCount > 0 ? reportCount : 1;
     }
 
     /** Still on the road: not rejected by the community, not cleared, not expired. */

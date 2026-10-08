@@ -30,6 +30,10 @@ import java.util.Random;
  *   dislikes take it down (CommunityService.settleReport decides, and pays
  *   out or takes off points). A like also restarts a hazard's clock - it's
  *   still there. A like is what older apps call "Helpful".
+ * - Reported again: when someone reports the same thing at the same spot,
+ *   their report is added to the one already there (addReporter) - it
+ *   counts as a like and as one more person who reported it, so many
+ *   people reporting one pothole make one report, not a pile of them.
  * - Not an issue anymore: once GONE_TO_CLEAR different people say so, a
  *   report (hazard or rule-breaker) is taken off the road early instead of
  *   waiting to expire. Nobody loses points - it was true, it's just over.
@@ -50,8 +54,13 @@ public class ReportFeedbackService {
     /** Older apps' Yes / No answers from further away than this are refused. */
     private static final double MAX_ANSWER_DISTANCE_METERS = 15_000;
     static final String TAKEN_DOWN = "This report was taken down - people said it was wrong.";
-    /** Likes keep a hazard up, but at most this many times its normal lifetime from when it was made. */
-    static final int MAX_LIFETIMES = 3;
+    /**
+     * Likes keep something that passes (a jam, an accident...) up, but at
+     * most this many times its normal lifetime from when it was made - so it
+     * can't stay up all day. A pothole or road work has no such limit: it
+     * stays as long as people keep seeing it (ReportKind.lasting).
+     */
+    static final int MAX_LIFETIMES = 2;
 
     private final RoadReportRepository roadReportRepository;
     private final ViolationComplaintRepository complaintRepository;
@@ -147,20 +156,59 @@ public class ReportFeedbackService {
     }
 
     /**
-     * A new like says it's still there: restart its clock, so a hazard
-     * people keep seeing stays up - but never past MAX_LIFETIMES times its
-     * normal lifetime from when it was made, so liking it again and again
-     * can't keep it up forever.
+     * A new like (or someone reporting it again) says it's still there:
+     * restart its clock, so a hazard people keep seeing stays up. Something
+     * that passes never stays past MAX_LIFETIMES times its normal lifetime
+     * from when it was made, so liking it again and again can't keep it up
+     * forever; a pothole or road work stays until it's fixed.
      */
     private static void keepUp(RoadReport report) {
         LocalDateTime now = LocalDateTime.now();
         if (!report.isActiveAt(now)) return;
         java.time.Duration life = ReportLifetime.of(report.getType(), report.getDescription());
-        LocalDateTime made = report.getTimestamp() != null ? report.getTimestamp() : now;
         LocalDateTime renewed = now.plus(life);
-        LocalDateTime latest = made.plus(life.multipliedBy(MAX_LIFETIMES));
-        if (renewed.isAfter(latest)) renewed = latest;
+        if (!ReportLifetime.lasting(report.getType(), report.getDescription())) {
+            LocalDateTime made = report.getTimestamp() != null ? report.getTimestamp() : now;
+            LocalDateTime latest = made.plus(life.multipliedBy(MAX_LIFETIMES));
+            if (renewed.isAfter(latest)) renewed = latest;
+        }
         if (renewed.isAfter(report.effectiveExpiresAt())) report.setExpiresAt(renewed);
+    }
+
+    // ------------------------------------------------------------------
+    // The same thing reported again at the same spot
+    // ------------------------------------------------------------------
+
+    /**
+     * Someone reported what's already reported here (RoadReportService
+     * found it): it stays one report. Their report counts as a like ("it's
+     * there" - which also restarts its clock and builds trust) and as one
+     * more person who reported this spot. Reporting your own report again
+     * just restarts its clock. A photo is kept if the report had none.
+     * Returns null if it has just been cleared or taken down - then the new
+     * report stands on its own.
+     */
+    public synchronized RoadReport addReporter(User reporter, Long reportId, String imageUrl) {
+        RoadReport report = findReport(reportId);
+        if (!report.isActiveAt(LocalDateTime.now())) return null;
+        if (imageUrl != null && !imageUrl.isBlank() && (report.getImageUrl() == null || report.getImageUrl().isBlank())) {
+            report.setImageUrl(imageUrl);
+        }
+        if (isReporter(reporter, report.getReporter())) {
+            keepUp(report);
+            report = roadReportRepository.save(report);
+            webSocketHandler.broadcast("ROAD_REPORT", Map.of("id", report.getId()));
+            return report;
+        }
+        setFeedback(reporter, VoteTarget.REPORT, report.getId(), FeedbackKind.REPORTED, true);
+        report.setReportCount(1 + count(VoteTarget.REPORT, report.getId(), FeedbackKind.REPORTED));
+        setFeedback(reporter, VoteTarget.REPORT, report.getId(), FeedbackKind.HELPFUL, true);
+        setFeedback(reporter, VoteTarget.REPORT, report.getId(), FeedbackKind.DISLIKE, false);
+        // Reporting it says it's still there, so it no longer counts as "not there anymore" from them.
+        setFeedback(reporter, VoteTarget.REPORT, report.getId(), FeedbackKind.GONE, false);
+        report.setGoneCount(count(VoteTarget.REPORT, report.getId(), FeedbackKind.GONE));
+        keepUp(report);
+        return storeReportCounts(report);
     }
 
     private boolean has(User user, VoteTarget target, Long targetId, FeedbackKind kind) {
@@ -169,6 +217,10 @@ public class ReportFeedbackService {
 
     /** Stores the new counts, then lets the likes and dislikes decide the report (CommunityService.settleReport). */
     private RoadReportResponse saveReportCounts(User viewer, RoadReport report) {
+        return communityService.describeReport(viewer, storeReportCounts(report));
+    }
+
+    private RoadReport storeReportCounts(RoadReport report) {
         int likes = count(VoteTarget.REPORT, report.getId(), FeedbackKind.HELPFUL);
         int dislikes = count(VoteTarget.REPORT, report.getId(), FeedbackKind.DISLIKE);
         report.setHelpfulCount(likes);
@@ -179,7 +231,7 @@ public class ReportFeedbackService {
         report = roadReportRepository.save(report);
         report = communityService.settleReport(report);
         webSocketHandler.broadcast("ROAD_REPORT", Map.of("id", report.getId()));
-        return communityService.describeReport(viewer, report);
+        return report;
     }
 
     private ComplaintResponse saveComplaintCounts(User viewer, ViolationComplaint complaint) {
@@ -262,11 +314,21 @@ public class ReportFeedbackService {
         return communityService.describeReport(user, report);
     }
 
-    /** The reporter (or an admin) takes a report down now. Safe to repeat. */
+    /**
+     * The reporter (or an admin) takes a report down now. Someone whose
+     * report was added to this one (the same thing at the same spot) takes
+     * theirs back instead - the report stays up for the others. Safe to repeat.
+     */
     public synchronized RoadReportResponse clearOwn(User user, Long reportId) {
         RoadReport report = findReport(reportId);
         boolean admin = user.getRole() == Role.ADMIN;
         if (!isReporter(user, report.getReporter()) && !admin) {
+            if (has(user, VoteTarget.REPORT, report.getId(), FeedbackKind.REPORTED)) {
+                setFeedback(user, VoteTarget.REPORT, report.getId(), FeedbackKind.REPORTED, false);
+                setFeedback(user, VoteTarget.REPORT, report.getId(), FeedbackKind.HELPFUL, false);
+                report.setReportCount(1 + count(VoteTarget.REPORT, report.getId(), FeedbackKind.REPORTED));
+                return communityService.describeReport(user, storeReportCounts(report));
+            }
             throw ApiException.forbidden("Only the person who reported this can remove it.");
         }
         if (report.getClearedAt() == null) {

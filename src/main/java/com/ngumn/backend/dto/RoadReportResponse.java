@@ -26,6 +26,11 @@ import java.time.LocalDateTime;
  * it down (REJECTED); confirmations / denials mirror likes / dislikes, and
  * myVote is true after a like, false after a dislike or "not there
  * anymore", for older apps.
+ *
+ * reportCount: how many people reported this spot - when several people
+ * report the same pothole it stays one report (RoadReportService.submit).
+ * merged is true only in the answer to a new report that was added to one
+ * already there ("Already reported here - we added yours").
  */
 @Data
 @AllArgsConstructor
@@ -58,6 +63,8 @@ public class RoadReportResponse {
     private Integer dislikeCount;
     private String myReaction;
     private Integer commentCount;
+    private Integer reportCount;
+    private Boolean merged;
 
     public static RoadReportResponse from(RoadReport r) {
         return from(r, null, null, null, false, false, LocalDateTime.now());
@@ -98,7 +105,9 @@ public class RoadReportResponse {
                 likes,
                 r.getDislikeCount() != null ? r.getDislikeCount() : 0,
                 likedByMe ? "LIKE" : dislikedByMe ? "DISLIKE" : null,
-                r.getCommentCount() != null ? r.getCommentCount() : 0
+                r.getCommentCount() != null ? r.getCommentCount() : 0,
+                r.reporters(),
+                null
         );
     }
 }

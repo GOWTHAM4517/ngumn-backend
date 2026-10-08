@@ -10,5 +10,11 @@ public enum FeedbackKind {
     /** "Not an issue anymore" - enough of these clear the report early, and nobody loses points. */
     GONE,
     /** Dislike - the thumbs down: "it's wrong". More than two take a report down. Never both a like and a dislike from one person. */
-    DISLIKE
+    DISLIKE,
+    /**
+     * Reported the same thing at the same spot - their report was added to
+     * this one instead of making a second report (RoadReportService.submit).
+     * It also counts as a like. RoadReport.reportCount is 1 + these.
+     */
+    REPORTED
 }
