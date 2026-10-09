@@ -22,10 +22,11 @@ import java.util.regex.Pattern;
  *   reporting it again) restarts its clock, with no limit, and two people
  *   saying "not there anymore" clear it.
  * - how close two reports of it must be to be the same thing
- *   (`sameSpotMeters`). A second pothole report within 100 m (what you can
- *   see from the spot) is the same pothole, a second traffic jam within
- *   400 m is the same jam, and rain within 2 km is the same rain - so many
- *   people reporting one thing make
+ *   (`sameSpotMeters`): as far as people at the spot can see it. A second
+ *   pothole report within 30 m is the same pothole, a collision within 50 m
+ *   the same collision, a traffic jam within 150 m (the queue you can see
+ *   ahead) the same jam; only weather covers an area (rain within 2 km is
+ *   the same rain) - so many people reporting one thing make
  *   one report, not a pile of them (RoadReportService.submit). Reports of a
  *   catch-all kind (`general`: "Other", a road hazard or an emergency that
  *   isn't one of the named ones) are only the same thing when they say the
@@ -35,23 +36,23 @@ import java.util.regex.Pattern;
  * - keep the two in sync.
  */
 public enum ReportKind {
-    POTHOLE(Duration.ofDays(60), true, 100, false),
-    ROAD_WORK(Duration.ofDays(7), true, 150, false),
-    ACCIDENT(Duration.ofHours(2), false, 150, false),
-    TRAFFIC_JAM(Duration.ofHours(1), false, 400, false),
-    SIGNAL_DOWN(Duration.ofHours(6), false, 100, false),
-    AMBULANCE(Duration.ofMinutes(10), false, 300, false),
-    EMERGENCY(Duration.ofMinutes(30), false, 100, true),
-    ANIMAL(Duration.ofMinutes(30), false, 100, false),
-    FLOODING(Duration.ofHours(6), false, 150, false),
-    FALLEN_TREE(Duration.ofHours(12), false, 100, false),
-    SLIPPERY(Duration.ofHours(4), false, 100, false),
-    DEBRIS(Duration.ofHours(4), false, 100, false),
-    ROAD_HAZARD(Duration.ofHours(4), false, 100, true),
+    POTHOLE(Duration.ofDays(60), true, 30, false),
+    ROAD_WORK(Duration.ofDays(7), true, 50, false),
+    ACCIDENT(Duration.ofHours(2), false, 50, false),
+    TRAFFIC_JAM(Duration.ofHours(1), false, 150, false),
+    SIGNAL_DOWN(Duration.ofHours(6), false, 50, false),
+    AMBULANCE(Duration.ofMinutes(10), false, 100, false),
+    EMERGENCY(Duration.ofMinutes(30), false, 50, true),
+    ANIMAL(Duration.ofMinutes(30), false, 50, false),
+    FLOODING(Duration.ofHours(6), false, 50, false),
+    FALLEN_TREE(Duration.ofHours(12), false, 50, false),
+    SLIPPERY(Duration.ofHours(4), false, 30, false),
+    DEBRIS(Duration.ofHours(4), false, 30, false),
+    ROAD_HAZARD(Duration.ofHours(4), false, 30, true),
     RAIN(Duration.ofHours(2), false, 2000, false),
     FOG(Duration.ofHours(2), false, 2000, false),
     WIND(Duration.ofHours(2), false, 2000, false),
-    OTHER(Duration.ofHours(2), false, 100, true);
+    OTHER(Duration.ofHours(2), false, 30, true);
 
     /** How long a report of this kind stays up on its own, from when it was made (or last confirmed). */
     public final Duration lifetime;

@@ -34,8 +34,9 @@ import java.util.Map;
  * that are still on the road.
  *
  * One spot, one report: when someone reports what's already reported
- * there (the same kind of thing within ReportKind.sameSpotMeters - 100 m
- * for a pothole, 400 m for a traffic jam), their report is added to the
+ * there (the same kind of thing within ReportKind.sameSpotMeters - as far
+ * as people there can see it: 30 m for a pothole, 50 m for a collision,
+ * 150 m for a traffic jam), their report is added to the
  * one already there instead of making a second one. It counts as "it's
  * still there" and as one more person who reported it.
  */
