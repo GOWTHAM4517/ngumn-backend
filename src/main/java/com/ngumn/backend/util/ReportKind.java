@@ -22,9 +22,10 @@ import java.util.regex.Pattern;
  *   reporting it again) restarts its clock, with no limit, and two people
  *   saying "not there anymore" clear it.
  * - how close two reports of it must be to be the same thing
- *   (`sameSpotMeters`). A second pothole report within 50 m is the same
- *   pothole, a second traffic jam within 400 m is the same jam, and rain
- *   within 2 km is the same rain - so many people reporting one thing make
+ *   (`sameSpotMeters`). A second pothole report within 100 m (what you can
+ *   see from the spot) is the same pothole, a second traffic jam within
+ *   400 m is the same jam, and rain within 2 km is the same rain - so many
+ *   people reporting one thing make
  *   one report, not a pile of them (RoadReportService.submit). Reports of a
  *   catch-all kind (`general`: "Other", a road hazard or an emergency that
  *   isn't one of the named ones) are only the same thing when they say the
@@ -34,7 +35,7 @@ import java.util.regex.Pattern;
  * - keep the two in sync.
  */
 public enum ReportKind {
-    POTHOLE(Duration.ofDays(60), true, 50, false),
+    POTHOLE(Duration.ofDays(60), true, 100, false),
     ROAD_WORK(Duration.ofDays(7), true, 150, false),
     ACCIDENT(Duration.ofHours(2), false, 150, false),
     TRAFFIC_JAM(Duration.ofHours(1), false, 400, false),
@@ -43,10 +44,10 @@ public enum ReportKind {
     EMERGENCY(Duration.ofMinutes(30), false, 100, true),
     ANIMAL(Duration.ofMinutes(30), false, 100, false),
     FLOODING(Duration.ofHours(6), false, 150, false),
-    FALLEN_TREE(Duration.ofHours(12), false, 80, false),
+    FALLEN_TREE(Duration.ofHours(12), false, 100, false),
     SLIPPERY(Duration.ofHours(4), false, 100, false),
-    DEBRIS(Duration.ofHours(4), false, 60, false),
-    ROAD_HAZARD(Duration.ofHours(4), false, 60, true),
+    DEBRIS(Duration.ofHours(4), false, 100, false),
+    ROAD_HAZARD(Duration.ofHours(4), false, 100, true),
     RAIN(Duration.ofHours(2), false, 2000, false),
     FOG(Duration.ofHours(2), false, 2000, false),
     WIND(Duration.ofHours(2), false, 2000, false),
