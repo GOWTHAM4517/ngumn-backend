@@ -23,7 +23,7 @@ import java.util.regex.Pattern;
  *   saying "not there anymore" clear it.
  * - how close two reports of it must be to be the same thing
  *   (`sameSpotMeters`): as far as people at the spot can see it. A second
- *   pothole report within 30 m is the same pothole, a collision within 50 m
+ *   pothole report within 50 m is the same pothole, a collision within 70 m
  *   the same collision, a traffic jam within 150 m (the queue you can see
  *   ahead) the same jam; only weather covers an area (rain within 2 km is
  *   the same rain) - so many people reporting one thing make
@@ -36,23 +36,23 @@ import java.util.regex.Pattern;
  * - keep the two in sync.
  */
 public enum ReportKind {
-    POTHOLE(Duration.ofDays(60), true, 30, false),
-    ROAD_WORK(Duration.ofDays(7), true, 50, false),
-    ACCIDENT(Duration.ofHours(2), false, 50, false),
+    POTHOLE(Duration.ofDays(60), true, 50, false),
+    ROAD_WORK(Duration.ofDays(7), true, 70, false),
+    ACCIDENT(Duration.ofHours(2), false, 70, false),
     TRAFFIC_JAM(Duration.ofHours(1), false, 150, false),
-    SIGNAL_DOWN(Duration.ofHours(6), false, 50, false),
+    SIGNAL_DOWN(Duration.ofHours(6), false, 70, false),
     AMBULANCE(Duration.ofMinutes(10), false, 100, false),
-    EMERGENCY(Duration.ofMinutes(30), false, 50, true),
-    ANIMAL(Duration.ofMinutes(30), false, 50, false),
-    FLOODING(Duration.ofHours(6), false, 50, false),
-    FALLEN_TREE(Duration.ofHours(12), false, 50, false),
-    SLIPPERY(Duration.ofHours(4), false, 30, false),
-    DEBRIS(Duration.ofHours(4), false, 30, false),
-    ROAD_HAZARD(Duration.ofHours(4), false, 30, true),
+    EMERGENCY(Duration.ofMinutes(30), false, 70, true),
+    ANIMAL(Duration.ofMinutes(30), false, 70, false),
+    FLOODING(Duration.ofHours(6), false, 70, false),
+    FALLEN_TREE(Duration.ofHours(12), false, 70, false),
+    SLIPPERY(Duration.ofHours(4), false, 50, false),
+    DEBRIS(Duration.ofHours(4), false, 50, false),
+    ROAD_HAZARD(Duration.ofHours(4), false, 50, true),
     RAIN(Duration.ofHours(2), false, 2000, false),
     FOG(Duration.ofHours(2), false, 2000, false),
     WIND(Duration.ofHours(2), false, 2000, false),
-    OTHER(Duration.ofHours(2), false, 30, true);
+    OTHER(Duration.ofHours(2), false, 50, true);
 
     /** How long a report of this kind stays up on its own, from when it was made (or last confirmed). */
     public final Duration lifetime;
