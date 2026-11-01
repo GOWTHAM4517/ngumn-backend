@@ -16,4 +16,13 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     /** Every responder account (for the admin dashboard). */
     List<User> findByResponderTeamIsNotNull();
+
+    /** Accounts with this mobile number (an emergency contact who also uses Raksio). */
+    List<User> findByPhone(String phone);
+
+    /** Admins - told when an emergency waits too long or a complaint misses its deadline. */
+    List<User> findByRoleAndActiveTrue(com.ngumn.backend.entity.Role role);
+
+    /** Asked to become a responder and waiting for an admin. */
+    List<User> findByRequestStatus(String requestStatus);
 }

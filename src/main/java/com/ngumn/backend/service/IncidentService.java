@@ -1,12 +1,20 @@
 package com.ngumn.backend.service;
 
+import com.ngumn.backend.dto.AdminIncidentAction;
+import com.ngumn.backend.dto.EmergencyStartRequest;
 import com.ngumn.backend.dto.IncidentRequest;
 import com.ngumn.backend.dto.IncidentResponse;
 import com.ngumn.backend.dto.IncidentUpdateRequest;
+import com.ngumn.backend.dto.RatingRequest;
 import com.ngumn.backend.entity.*;
 import com.ngumn.backend.exception.ApiException;
+import com.ngumn.backend.notify.AuthorityForwarder;
 import com.ngumn.backend.repository.IncidentRepository;
 import com.ngumn.backend.repository.UserRepository;
+import com.ngumn.backend.repository.VehicleRepository;
+import jakarta.annotation.PreDestroy;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import com.ngumn.backend.util.GeoUtil;
 import com.ngumn.backend.websocket.NgumnWebSocketHandler;
 import org.springframework.stereotype.Service;
@@ -16,7 +24,10 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Help requests (see Incident): someone asks for help, it goes to the team
@@ -48,15 +59,27 @@ public class IncidentService {
     public static final String CLOSED = "Help request closed";
     public static final String STILL_LOOKING = "Still finding help";
     public static final String CANCELLED = "Help request cancelled";
-    public static final List<String> HEADLINES = List.of(NEW_REQUEST, ON_THE_WAY, ARRIVED, RESOLVED, CLOSED, STILL_LOOKING, CANCELLED);
+    /** Waited too long - raised again with the team and the admins (EscalationService). */
+    public static final String ESCALATED = "Request escalated";
+    /** A department has started on a complaint. */
+    public static final String TAKEN_UP = "Complaint taken up";
+    public static final List<String> HEADLINES = List.of(NEW_REQUEST, ON_THE_WAY, ARRIVED, RESOLVED, CLOSED, STILL_LOOKING, CANCELLED,
+            ESCALATED, TAKEN_UP);
+
+    private static final Logger log = LoggerFactory.getLogger(IncidentService.class);
+    private static final DateTimeFormatter DUE = DateTimeFormatter.ofPattern("d MMM, h:mm a", Locale.ENGLISH);
 
     static final ZoneId IST = ZoneId.of("Asia/Kolkata");
     static final Set<String> VEHICLE_KINDS = Set.of("BIKE", "CYCLE", "AUTO", "CAR", "BUS", "TRUCK", "OTHER");
     static final Set<String> BLOCKING = Set.of("YES", "PARTLY", "NO");
     /** A responder's queue covers the last 12 hours (older open requests have gone stale). */
     static final Duration QUEUE_WINDOW = Duration.ofHours(12);
-    /** "My requests" goes back a week. */
-    static final Duration MINE_WINDOW = Duration.ofDays(7);
+    /** "My requests" goes back a month (complaints can take days). */
+    static final Duration MINE_WINDOW = Duration.ofDays(30);
+    /** Complaints stay in a department's list while open, up to this old. */
+    static final Duration COMPLAINT_WINDOW = Duration.ofDays(30);
+    /** Others reporting the same complaint this close by make it more urgent. */
+    static final double SAME_COMPLAINT_M = 150;
     /** For the ETA: roughly how fast a responder gets through city traffic. */
     static final double RESPONDER_KMH = 30;
     public static final int HIGH = 70;
@@ -66,13 +89,31 @@ public class IncidentService {
     private final UserRepository userRepository;
     private final AlertService alertService;
     private final NgumnWebSocketHandler webSocketHandler;
+    private final VehicleRepository vehicleRepository;
+    private final EmergencyService emergencyService;
+    private final AuthorityForwarder forwarder;
+    private final ExecutorService forwardPool = Executors.newFixedThreadPool(2, r -> {
+        Thread t = new Thread(r, "authority-forward");
+        t.setDaemon(true);
+        return t;
+    });
 
     public IncidentService(IncidentRepository incidentRepository, UserRepository userRepository,
-                           AlertService alertService, NgumnWebSocketHandler webSocketHandler) {
+                           AlertService alertService, NgumnWebSocketHandler webSocketHandler,
+                           VehicleRepository vehicleRepository, EmergencyService emergencyService,
+                           AuthorityForwarder forwarder) {
         this.incidentRepository = incidentRepository;
         this.userRepository = userRepository;
         this.alertService = alertService;
         this.webSocketHandler = webSocketHandler;
+        this.vehicleRepository = vehicleRepository;
+        this.emergencyService = emergencyService;
+        this.forwarder = forwarder;
+    }
+
+    @PreDestroy
+    void stopForwarding() {
+        forwardPool.shutdown();
     }
 
     /** Now in India - for peak hours. (A method so checks can pick the time.) */
@@ -93,6 +134,12 @@ public class IncidentService {
      */
     @Transactional
     public List<IncidentResponse> create(User user, IncidentRequest r) {
+        return create(user, r, "APP", null);
+    }
+
+    /** source: APP, CRASH, SOS or ADMIN; sosEventId when a crash / SOS made it. */
+    @Transactional
+    public List<IncidentResponse> create(User user, IncidentRequest r, String source, Long sosEventId) {
         if (r.getLatitude() < -90 || r.getLatitude() > 90 || r.getLongitude() < -180 || r.getLongitude() > 180) {
             throw ApiException.badRequest("That location doesn't look right.");
         }
@@ -111,11 +158,16 @@ public class IncidentService {
                     .map(i -> view(user, i, null)).toList();
         }
 
-        List<ResponderTeam> teams = new ArrayList<>(List.of(r.getType().team()));
-        if (r.getType() == IncidentType.ACCIDENT && injured > 0) teams.add(ResponderTeam.AMBULANCE);
+        List<ResponderTeam> teams = teamsFor(r.getType(), injured);
+        boolean complaint = r.getType().complaint();
 
         String caseKey = UUID.randomUUID().toString().substring(0, 12);
         int priority = priorityOf(r.getType(), vehicle, blocking, injured, nowIst());
+        if (complaint) {
+            // Several people complaining about the same thing nearby: it matters to more people.
+            long others = similarOpen(r.getType(), r.getLatitude(), r.getLongitude(), user.getId());
+            priority = Math.min(100, priority + (int) Math.min(20, others * 5));
+        }
         List<Incident> made = new ArrayList<>();
         for (ResponderTeam team : teams) {
             Incident incident = incidentRepository.save(Incident.builder()
@@ -131,15 +183,40 @@ public class IncidentService {
                     .description(description)
                     .status(IncidentStatus.OPEN)
                     .priority(priority)
+                    .source(source != null ? source : "APP")
+                    .sosEventId(sosEventId)
+                    .dueAt(complaint ? now().plusHours(r.getType().slaHours()) : null)
+                    .escalationLevel(0)
                     .build());
             made.add(incident);
             tellTeam(incident, user);
             changed(incident);
+            forward(incident, complaint ? "New complaint" : NEW_REQUEST);
         }
         return made.stream().map(i -> view(user, i, null)).toList();
     }
 
-    /** Someone's own requests from the last week, newest first. */
+    /**
+     * Which teams a request goes to: its own, plus an ambulance for an accident
+     * with people hurt, and the police for a fire (traffic and the scene).
+     */
+    public static List<ResponderTeam> teamsFor(IncidentType type, int injured) {
+        List<ResponderTeam> teams = new ArrayList<>(List.of(type.team()));
+        if (type == IncidentType.ACCIDENT && injured > 0) teams.add(ResponderTeam.AMBULANCE);
+        if (type == IncidentType.FIRE) teams.add(ResponderTeam.POLICE);
+        return teams;
+    }
+
+    /** Other people's open complaints of the same kind close by (last 30 days). */
+    private long similarOpen(IncidentType type, double lat, double lng, Long exceptReporter) {
+        return incidentRepository.findByTeamAndCreatedAtAfter(type.team(), now().minus(COMPLAINT_WINDOW)).stream()
+                .filter(i -> i.getType() == type && i.getStatus().active())
+                .filter(i -> !i.getReporter().getId().equals(exceptReporter))
+                .filter(i -> GeoUtil.distanceMeters(lat, lng, i.getLatitude(), i.getLongitude()) <= SAME_COMPLAINT_M)
+                .map(Incident::getCaseKey).distinct().count();
+    }
+
+    /** Someone's own requests from the last month, newest first. */
     public List<IncidentResponse> mine(User user) {
         return incidentRepository
                 .findByReporterIdAndCreatedAtAfterOrderByCreatedAtDesc(user.getId(), now().minus(MINE_WINDOW)).stream()
@@ -159,6 +236,7 @@ public class IncidentService {
             User assignee = i.getAssignee();
             i.setStatus(IncidentStatus.CANCELLED);
             i.setClosedAt(now());
+            endCorridor(i);
             incidentRepository.save(i);
             if (assignee != null) {
                 note(assignee, i, CANCELLED, "The person who asked cancelled the request (" + summary(i) + "). You don't need to go.");
@@ -178,8 +256,13 @@ public class IncidentService {
      */
     public List<IncidentResponse> queue(User responder, Double lat, Double lng) {
         ResponderTeam team = requireResponder(responder);
-        LocalDateTime since = now().minus(QUEUE_WINDOW);
-        List<Incident> rows = incidentRepository.findByTeamAndCreatedAtAfter(team, since);
+        LocalDateTime recent = now().minus(QUEUE_WINDOW);
+        // Help requests: the last 12 hours. Complaints: while open (up to 30 days), so none is forgotten.
+        List<Incident> rows = incidentRepository.findByTeamAndCreatedAtAfter(team, now().minus(COMPLAINT_WINDOW)).stream()
+                .filter(i -> i.getCreatedAt().isAfter(recent)
+                        || (i.getType().complaint() && i.getStatus().active())
+                        || (i.getClosedAt() != null && i.getClosedAt().isAfter(recent)))
+                .toList();
         Long me = responder.getId();
 
         Comparator<Incident> urgentFirst = Comparator.<Incident>comparingInt(this::priorityNow).reversed()
@@ -222,12 +305,21 @@ public class IncidentService {
             double km = GeoUtil.distanceMeters(lat, lng, incident.getLatitude(), incident.getLongitude()) / 1000.0;
             eta = (int) Math.max(2, Math.round(km / RESPONDER_KMH * 60) + 2);
         }
-        incident.setEtaMinutes(eta);
-        incidentRepository.save(incident);
-        note(incident.getReporter(), incident, ON_THE_WAY,
-                unitOf(responder) + " is coming for your " + incident.getType().noun()
-                        + (eta != null ? " - about " + eta + " min." : ".")
-                        + safetyTip(incident));
+        if (incident.getType().complaint()) {
+            incident.setEtaMinutes(null);
+            incidentRepository.save(incident);
+            note(incident.getReporter(), incident, TAKEN_UP,
+                    unitOf(responder) + " has taken up your " + incident.getType().noun()
+                            + (incident.getDueAt() != null ? ". It should be fixed by " + incident.getDueAt().format(DUE) + "." : "."));
+        } else {
+            incident.setEtaMinutes(eta);
+            startCorridor(incident, responder);
+            incidentRepository.save(incident);
+            note(incident.getReporter(), incident, ON_THE_WAY,
+                    unitOf(responder) + " is coming for your " + incident.getType().noun()
+                            + (eta != null ? " - about " + eta + " min." : ".")
+                            + safetyTip(incident));
+        }
         changed(incident);
         return view(responder, incident, null);
     }
@@ -257,12 +349,15 @@ public class IncidentService {
                 incident.setOutcome(r.getOutcome());
                 incident.setClosedAt(now());
                 if (incident.getArrivedAt() == null) incident.setArrivedAt(now());
+                endCorridor(incident);
                 incidentRepository.save(incident);
-                note(incident.getReporter(), incident, RESOLVED, r.getOutcome().label() + " (" + unit + ")." + extra);
+                note(incident.getReporter(), incident, RESOLVED, r.getOutcome().label() + " (" + unit + ")." + extra
+                        + " Rate how it was handled in Raksio.");
             }
             case FALSE_REPORT -> {
                 incident.setStatus(IncidentStatus.FALSE_REPORT);
                 incident.setClosedAt(now());
+                endCorridor(incident);
                 incidentRepository.save(incident);
                 note(incident.getReporter(), incident, CLOSED, unit + " found nothing that needed help at the spot." + extra);
             }
@@ -273,6 +368,7 @@ public class IncidentService {
                 incident.setEtaMinutes(null);
                 incident.setAcceptedAt(null);
                 incident.setArrivedAt(null);
+                endCorridor(incident);
                 incidentRepository.save(incident);
                 note(incident.getReporter(), incident, STILL_LOOKING,
                         unit + " can't come after all - your request is back with the " + incident.getTeam().label() + "." + extra);
@@ -299,7 +395,265 @@ public class IncidentService {
     IncidentResponse view(User viewer, Incident i, Double distance) {
         boolean responderView = viewer.getResponderTeam() == i.getTeam() || viewer.getRole() == Role.ADMIN;
         int p = priorityNow(i);
-        return IncidentResponse.from(i, viewer.getId(), responderView, p, urgencyOf(p), distance);
+        return IncidentResponse.from(i, viewer.getId(), responderView, p, urgencyOf(p), distance, now());
+    }
+
+    // ------------------------------------------------------------------ rating
+
+    /** The person who asked rates a resolved request or complaint (1-5 stars). */
+    @Transactional
+    public IncidentResponse rate(User user, Long id, RatingRequest r) {
+        Incident incident = find(id);
+        if (!incident.getReporter().getId().equals(user.getId())) throw ApiException.forbidden("Only the person who asked can rate it.");
+        if (incident.getStatus() != IncidentStatus.RESOLVED) throw ApiException.badRequest("You can rate it once it's resolved.");
+        incident.setRating(r.getStars());
+        incident.setRatingComment(r.getComment() != null && !r.getComment().isBlank() ? r.getComment().trim() : null);
+        incidentRepository.save(incident);
+        if (incident.getAssignee() != null) {
+            note(incident.getAssignee(), incident, RESOLVED, "Rated " + r.getStars() + "/5 by the person who asked ("
+                    + summary(incident) + ")" + (incident.getRatingComment() != null ? ": \"" + incident.getRatingComment() + "\"" : "."));
+        }
+        changed(incident);
+        return view(user, incident, null);
+    }
+
+    // ------------------------------------------------------------------ admin control
+
+    /** Every request and complaint in the last `days` (newest / most urgent first), optionally one team or status. */
+    public List<IncidentResponse> adminList(User admin, ResponderTeam team, String status, boolean complaints, boolean help, int days) {
+        requireAdmin(admin);
+        LocalDateTime since = now().minusDays(Math.max(1, Math.min(days, 90)));
+        Set<String> statuses = new HashSet<>();
+        if (status != null && !status.isBlank()) {
+            if (status.equalsIgnoreCase("ACTIVE")) statuses.addAll(List.of("OPEN", "ACCEPTED", "AT_SCENE"));
+            else statuses.add(status.trim().toUpperCase(Locale.ROOT));
+        }
+        return incidentRepository.findByCreatedAtAfter(since).stream()
+                .filter(i -> team == null || i.getTeam() == team)
+                .filter(i -> statuses.isEmpty() || statuses.contains(i.getStatus().name()))
+                .filter(i -> (complaints && i.getType().complaint()) || (help && !i.getType().complaint()))
+                .sorted(Comparator.comparing((Incident i) -> !i.getStatus().active())
+                        .thenComparing(Comparator.comparingInt(this::priorityNow).reversed())
+                        .thenComparing(Incident::getCreatedAt, Comparator.reverseOrder()))
+                .limit(500)
+                .map(i -> view(admin, i, null)).toList();
+    }
+
+    /**
+     * Admin takes charge: assign to a responder of the same team, or change
+     * the status (close, resolve, mark false, reopen). Everyone involved is told.
+     */
+    @Transactional
+    public IncidentResponse adminAct(User admin, Long id, AdminIncidentAction a) {
+        requireAdmin(admin);
+        Incident incident = find(id);
+        String note = a.getNote() != null && !a.getNote().isBlank() ? a.getNote().trim() : null;
+        if (note != null) incident.setNote(note.length() > 300 ? note.substring(0, 300) : note);
+        String extra = note != null ? " \"" + note + "\"" : "";
+
+        if (a.getResponderId() != null) {
+            User responder = userRepository.findById(a.getResponderId()).orElseThrow(() -> ApiException.notFound("Responder not found"));
+            if (responder.getResponderTeam() != incident.getTeam()) {
+                throw ApiException.badRequest(responder.getName() + " isn't on the " + incident.getTeam().label() + " team.");
+            }
+            User before = incident.getAssignee();
+            incident.setAssignee(responder);
+            if (incident.getStatus() == IncidentStatus.OPEN || !incident.getStatus().active()) {
+                incident.setStatus(IncidentStatus.ACCEPTED);
+                incident.setClosedAt(null);
+            }
+            if (incident.getAcceptedAt() == null) incident.setAcceptedAt(now());
+            incidentRepository.save(incident);
+            note(responder, incident, NEW_REQUEST, "The admin assigned this to you: " + summary(incident) + "." + extra
+                    + " Open Raksio to see where it is.");
+            if (before != null && !before.getId().equals(responder.getId())) {
+                note(before, incident, CLOSED, "The admin moved " + summary(incident) + " to " + unitOf(responder) + ".");
+            }
+            note(incident.getReporter(), incident, incident.getType().complaint() ? TAKEN_UP : ON_THE_WAY,
+                    unitOf(responder) + " has been assigned to your " + incident.getType().noun() + "." + extra);
+        }
+
+        if (a.getStatus() != null) {
+            IncidentStatus to = a.getStatus();
+            switch (to) {
+                case RESOLVED -> {
+                    incident.setStatus(IncidentStatus.RESOLVED);
+                    incident.setOutcome(a.getOutcome() != null ? a.getOutcome() : IncidentOutcome.SITUATION_HANDLED);
+                    incident.setClosedAt(now());
+                    endCorridor(incident);
+                    note(incident.getReporter(), incident, RESOLVED, incident.getOutcome().label() + " (closed by the Raksio admin)." + extra);
+                }
+                case FALSE_REPORT, CANCELLED -> {
+                    incident.setStatus(to);
+                    incident.setClosedAt(now());
+                    endCorridor(incident);
+                    note(incident.getReporter(), incident, CLOSED, "The Raksio admin closed your " + incident.getType().noun() + "." + extra);
+                }
+                case OPEN -> {
+                    incident.setStatus(IncidentStatus.OPEN);
+                    incident.setAssignee(null);
+                    incident.setAcceptedAt(null);
+                    incident.setArrivedAt(null);
+                    incident.setClosedAt(null);
+                    incident.setOutcome(null);
+                    endCorridor(incident);
+                    if (incident.getType().complaint() && (incident.getDueAt() == null || incident.getDueAt().isBefore(now()))) {
+                        incident.setDueAt(now().plusHours(incident.getType().slaHours()));
+                    }
+                    tellTeam(incident, null);
+                    note(incident.getReporter(), incident, STILL_LOOKING, "The Raksio admin reopened your " + incident.getType().noun() + "." + extra);
+                }
+                default -> throw ApiException.badRequest("The admin can resolve, close, mark false, cancel or reopen.");
+            }
+            if (incident.getAssignee() != null && to != IncidentStatus.OPEN) {
+                note(incident.getAssignee(), incident, CLOSED, "The admin set " + summary(incident) + " to " + to.name().replace('_', ' ').toLowerCase(Locale.ROOT) + ".");
+            }
+            incidentRepository.save(incident);
+        }
+        changed(incident);
+        return view(admin, incident, null);
+    }
+
+    // ------------------------------------------------------------------ escalation
+
+    /**
+     * Raises requests that have waited too long (run every minute by EscalationService):
+     *
+     * <ul>
+     *   <li>Help request nobody accepted: after 5 min (urgent) / 10 min - the team
+     *       again and every admin; after 15 min - admins again, the authority's
+     *       control room again, and the person is told to call 112.</li>
+     *   <li>Complaint nobody took up within a day (or half its deadline): the team
+     *       and admins. Past its deadline: again, and the person is told it's been
+     *       escalated. A whole deadline later: the admins once more.</li>
+     * </ul>
+     */
+    @Transactional
+    public int escalateDue() {
+        LocalDateTime t = now();
+        int n = 0;
+        for (Incident i : incidentRepository.findByCreatedAtAfter(t.minus(COMPLAINT_WINDOW))) {
+            if (!i.getStatus().active()) continue;
+            int level = i.getEscalationLevel() != null ? i.getEscalationLevel() : 0;
+            long waited = Duration.between(i.getCreatedAt(), t).toMinutes();
+            if (!i.getType().complaint()) {
+                if (i.getStatus() != IncidentStatus.OPEN || i.getCreatedAt().isBefore(t.minus(QUEUE_WINDOW))) continue;
+                int first = priorityNow(i) >= HIGH ? 5 : 10;
+                if (level == 0 && waited >= first) {
+                    escalate(i, 1, "No unit has accepted it in " + waited + " min.", false, true);
+                    n++;
+                } else if (level == 1 && waited >= 15) {
+                    escalate(i, 2, "Still nobody after " + waited + " min.", true, true);
+                    note(i.getReporter(), i, STILL_LOOKING, "No unit has accepted your " + i.getType().noun()
+                            + " yet - it has been raised with the admin. If it's urgent, call 112 now.");
+                    n++;
+                }
+            } else {
+                long sla = i.getType().slaHours() * 60L;
+                boolean notTakenUp = i.getStatus() == IncidentStatus.OPEN;
+                boolean overdue = i.getDueAt() != null && t.isAfter(i.getDueAt());
+                if (level == 0 && notTakenUp && waited >= Math.min(24 * 60, Math.max(30, sla / 2))) {
+                    escalate(i, 1, "Not taken up after " + hours(waited) + ".", false, true);
+                    n++;
+                } else if (level <= 1 && overdue) {
+                    escalate(i, 2, "Past its deadline (" + i.getDueAt().format(DUE) + ").", true, true);
+                    note(i.getReporter(), i, ESCALATED, "Your " + i.getType().noun() + " missed its deadline, so it has been raised with "
+                            + "the Raksio admin and the department's control room.");
+                    n++;
+                } else if (level == 2 && i.getDueAt() != null && t.isAfter(i.getDueAt().plusMinutes(sla))) {
+                    escalate(i, 3, "Still not fixed, " + hours(Duration.between(i.getDueAt(), t).toMinutes()) + " past its deadline.", true, false);
+                    n++;
+                }
+            }
+        }
+        return n;
+    }
+
+    private void escalate(Incident i, int level, String why, boolean forwardAgain, boolean tellTeamAgain) {
+        i.setEscalationLevel(level);
+        i.setLastEscalatedAt(now());
+        incidentRepository.save(i);
+        String text = summary(i) + " - " + why + (i.getAssignee() != null ? " With " + unitOf(i.getAssignee()) + "." : "");
+        for (User admin : userRepository.findByRoleAndActiveTrue(Role.ADMIN)) {
+            alertService.raiseAboutIncident(admin, AlertType.HIGH_RISK, RiskLevel.HIGH, ESCALATED + ": " + text,
+                    i.getLatitude(), i.getLongitude(), i.getId());
+        }
+        if (tellTeamAgain) {
+            if (i.getAssignee() != null) note(i.getAssignee(), i, ESCALATED, text);
+            else tellTeam(i, null);
+        }
+        if (forwardAgain) forward(i, ESCALATED);
+        changed(i);
+    }
+
+    private static String hours(long minutes) {
+        if (minutes < 120) return minutes + " min";
+        if (minutes < 48 * 60) return (minutes / 60) + " hours";
+        return (minutes / (60 * 24)) + " days";
+    }
+
+    // ------------------------------------------------------------------ authority systems and the Green Corridor
+
+    /** Hands it on to the authority's own control room / system (in the background). */
+    private void forward(Incident incident, String headline) {
+        Long id = incident.getId();
+        String summary = summary(incident);
+        String map = "https://maps.google.com/?q=" + String.format(Locale.ROOT, "%.6f,%.6f", incident.getLatitude(), incident.getLongitude());
+        if (forwarder.webhookFor(incident.getTeam()).isEmpty() && forwarder.smsNumbersFor(incident.getTeam()).isEmpty()) {
+            incident.setForwardStatus("OFF");
+            return;
+        }
+        forwardPool.submit(() -> {
+            try {
+                Incident fresh = incidentRepository.findById(id).orElse(null);
+                if (fresh == null) return;
+                String result = forwarder.forward(fresh, summary, map, headline);
+                fresh.setForwardStatus(result.length() > 120 ? result.substring(0, 120) : result);
+                incidentRepository.save(fresh);
+            } catch (Exception e) {
+                log.warn("Forwarding request {} failed: {}", id, e.toString());
+            }
+        });
+    }
+
+    /**
+     * An ambulance or fire engine on its way: start the (simulated) Green
+     * Corridor from its live position to the spot, so drivers ahead are asked
+     * to give way. Needs the responder to be sharing live location.
+     */
+    private void startCorridor(Incident incident, User responder) {
+        if (incident.getTeam() != ResponderTeam.AMBULANCE && incident.getTeam() != ResponderTeam.FIRE) return;
+        try {
+            Vehicle v = vehicleRepository.findByOwnerId(responder.getId()).stream()
+                    .filter(x -> !Boolean.TRUE.equals(x.getIsSimulated()) && x.getCurrentLatitude() != null)
+                    .max(Comparator.comparing(x -> x.getLastLocationUpdate() != null ? x.getLastLocationUpdate() : LocalDateTime.MIN))
+                    .orElse(null);
+            if (v == null) return;
+            EmergencyStartRequest req = new EmergencyStartRequest();
+            req.setVehicleId(v.getId());
+            req.setOriginLatitude(v.getCurrentLatitude());
+            req.setOriginLongitude(v.getCurrentLongitude());
+            req.setDestinationLatitude(incident.getLatitude());
+            req.setDestinationLongitude(incident.getLongitude());
+            incident.setCorridorEventId(emergencyService.start(req).getId());
+        } catch (RuntimeException e) {
+            log.warn("Couldn't start the Green Corridor for request {}: {}", incident.getId(), e.toString());
+        }
+    }
+
+    private void endCorridor(Incident incident) {
+        Long eventId = incident.getCorridorEventId();
+        if (eventId == null) return;
+        incident.setCorridorEventId(null);
+        try {
+            emergencyService.end(eventId);
+        } catch (RuntimeException e) {
+            log.debug("Green Corridor {} already ended: {}", eventId, e.toString());
+        }
+    }
+
+    private static void requireAdmin(User user) {
+        if (user.getRole() != Role.ADMIN) throw ApiException.forbidden("Only admins can do this.");
     }
 
     // ------------------------------------------------------------------ priority
@@ -385,6 +739,7 @@ public class IncidentService {
             case ACCIDENT -> " Don't move anyone who is badly hurt unless they're in danger.";
             case UNSAFE -> " Stay somewhere busy and well lit.";
             case LIVE_WIRE -> " Keep everyone well away from the wire.";
+            case FIRE -> " Move everyone well away and upwind. Don't go back for belongings.";
             default -> "";
         };
     }
@@ -445,8 +800,14 @@ public class IncidentService {
         Map<String, Long> counts = new LinkedHashMap<>();
         for (ResponderTeam t : ResponderTeam.values()) {
             counts.put(t.name(), incidentRepository.findByTeamAndCreatedAtAfter(t, since).stream()
-                    .filter(i -> i.getStatus() == IncidentStatus.OPEN).count());
+                    .filter(i -> i.getStatus() == IncidentStatus.OPEN && !i.getType().complaint()).count());
         }
+        LocalDateTime month = now().minus(COMPLAINT_WINDOW);
+        List<Incident> recent = incidentRepository.findByCreatedAtAfter(month);
+        counts.put("COMPLAINTS_OPEN", recent.stream().filter(i -> i.getType().complaint() && i.getStatus().active()).count());
+        counts.put("COMPLAINTS_OVERDUE", recent.stream().filter(i -> i.getType().complaint() && i.getStatus().active()
+                && i.getDueAt() != null && now().isAfter(i.getDueAt())).count());
+        counts.put("ESCALATED", recent.stream().filter(i -> i.getStatus().active() && i.getEscalationLevel() != null && i.getEscalationLevel() > 0).count());
         return counts;
     }
 }

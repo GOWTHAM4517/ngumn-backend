@@ -3,6 +3,7 @@ package com.ngumn.backend.controller;
 import com.ngumn.backend.dto.IncidentRequest;
 import com.ngumn.backend.dto.IncidentResponse;
 import com.ngumn.backend.dto.IncidentUpdateRequest;
+import com.ngumn.backend.dto.RatingRequest;
 import com.ngumn.backend.entity.User;
 import com.ngumn.backend.service.AuthService;
 import com.ngumn.backend.service.IncidentService;
@@ -79,6 +80,15 @@ public class IncidentController {
                                                    @Valid @RequestBody IncidentUpdateRequest request) {
         User user = authService.requireUser(authorization);
         return ResponseEntity.ok(incidentService.update(user, id, request));
+    }
+
+    /** The person who asked rates a resolved request or complaint. */
+    @PostMapping("/{id}/rate")
+    public ResponseEntity<IncidentResponse> rate(@RequestHeader("Authorization") String authorization,
+                                                 @PathVariable Long id,
+                                                 @Valid @RequestBody RatingRequest request) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(incidentService.rate(user, id, request));
     }
 
     @PostMapping("/{id}/cancel")

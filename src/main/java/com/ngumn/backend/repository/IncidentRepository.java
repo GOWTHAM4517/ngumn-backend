@@ -15,4 +15,7 @@ public interface IncidentRepository extends JpaRepository<Incident, Long> {
     List<Incident> findByReporterIdAndCreatedAtAfterOrderByCreatedAtDesc(Long reporterId, LocalDateTime after);
 
     List<Incident> findByCaseKey(String caseKey);
+
+    /** Everything made since a time - the admin dashboard and the escalation check. */
+    List<Incident> findByCreatedAtAfter(LocalDateTime after);
 }

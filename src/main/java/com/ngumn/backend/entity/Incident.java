@@ -105,10 +105,45 @@ public class Incident {
     private LocalDateTime arrivedAt;
     private LocalDateTime closedAt;
 
+    /** Where it came from: APP (asked by hand), CRASH (crash detection), SOS, ADMIN. */
+    @Column(length = 12)
+    private String source;
+
+    /** The SOS / crash alert that made it, if any (see SosEvent). */
+    @Column(name = "sos_event_id")
+    private Long sosEventId;
+
+    /** Complaints: when it should be fixed by (made + the type's slaHours). */
+    @Column(name = "due_at")
+    private LocalDateTime dueAt;
+
+    /** How many times it has been raised again for waiting too long (EscalationService). */
+    @Column(name = "escalation_level")
+    private Integer escalationLevel;
+
+    @Column(name = "last_escalated_at")
+    private LocalDateTime lastEscalatedAt;
+
+    /** The person who asked rates how it was handled (1-5) once it's resolved. */
+    private Integer rating;
+
+    @Column(name = "rating_comment", length = 300)
+    private String ratingComment;
+
+    /** Sent on to the authority's own control room / system (AuthorityForwarder): SENT, FAILED or OFF. */
+    @Column(name = "forward_status", length = 120)
+    private String forwardStatus;
+
+    /** The Green Corridor started when an ambulance or fire engine took it (EmergencyEvent id). */
+    @Column(name = "corridor_event_id")
+    private Long corridorEventId;
+
     @PrePersist
     protected void onCreate() {
         if (this.createdAt == null) this.createdAt = LocalDateTime.now();
         if (this.status == null) this.status = IncidentStatus.OPEN;
         if (this.priority == null) this.priority = 0;
+        if (this.escalationLevel == null) this.escalationLevel = 0;
+        if (this.source == null) this.source = "APP";
     }
 }

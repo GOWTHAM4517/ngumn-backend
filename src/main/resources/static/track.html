@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex" />
+<title>Raksio Live Location</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<style>
+  :root { --bg: #F4F6FA; --card: #FFFFFF; --text: #0F1B2D; --muted: #5B6B80; --red: #C81E1E; --green: #148A47; --border: #E1E6EE; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #07111F; --card: #0D1C2E; --text: #FFFFFF; --muted: #93A3B8; --border: #172D46; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 16px; }
+  .banner { background: var(--red); color: #fff; border-radius: 16px; padding: 16px 18px; }
+  .banner.ok { background: var(--green); }
+  .banner.closed { background: #46586D; }
+  .banner h1 { font-size: 20px; margin: 0 0 4px; }
+  .banner p { margin: 0; font-size: 14px; opacity: .92; line-height: 1.45; }
+  #map { height: 52vh; min-height: 280px; border-radius: 16px; margin: 14px 0; border: 1px solid var(--border); }
+  .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .buttons a:nth-child(3):last-child { grid-column: span 2; }
+  a.btn { display: block; text-align: center; padding: 14px; border-radius: 12px; font-weight: 700; text-decoration: none; font-size: 15px; }
+  a.call { background: var(--red); color: #fff; }
+  a.maps { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; margin-top: 12px; }
+  .card h2 { font-size: 13px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .row { display: flex; justify-content: space-between; font-size: 14px; padding: 6px 0; border-top: 1px solid var(--border); gap: 10px; }
+  .row:first-of-type { border-top: none; }
+  .muted { color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="banner" id="banner"><h1 id="headline">Loading…</h1><p id="sub"></p></div>
+  <div id="map"></div>
+  <div class="buttons" id="buttons"></div>
+  <div class="card"><h2>Help</h2><div id="teams"><div class="row"><span>Finding out…</span></div></div></div>
+  <p class="muted">This page was sent by Raksio because you are an emergency contact. It updates by itself every 15 seconds and stops showing the location once the emergency is over. If someone's life is in danger, call <a href="tel:112">112</a>.</p>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(function () {
+  var token = new URLSearchParams(location.search).get('t') || '';
+  var STATUS = { OPEN: 'Waiting for a unit', ACCEPTED: 'On the way', AT_SCENE: 'At the spot', RESOLVED: 'Done', FALSE_REPORT: 'Closed', CANCELLED: 'Called off' };
+  var map = null, marker = null;
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+
+  function load() {
+    fetch('/api/track/' + encodeURIComponent(token)).then(function (r) {
+      if (!r.ok) throw new Error('This link has expired or is wrong.');
+      return r.json();
+    }).then(show).catch(function (e) {
+      document.getElementById('headline').textContent = 'Link not available';
+      document.getElementById('sub').textContent = e.message;
+      document.getElementById('banner').className = 'banner closed';
+    });
+  }
+
+  function show(d) {
+    var banner = document.getElementById('banner');
+    document.getElementById('headline').textContent = d.headline;
+    if (d.status === 'CANCELLED') {
+      banner.className = 'banner ok';
+      document.getElementById('sub').textContent = d.name + ' said they are OK - it was a false alarm.';
+    } else if (d.status !== 'ACTIVE') {
+      banner.className = 'banner closed';
+      document.getElementById('sub').textContent = 'This emergency is over, so the location is no longer shown.';
+    } else {
+      banner.className = 'banner';
+      var t = d.updatedAt ? new Date(d.updatedAt) : null;
+      document.getElementById('sub').textContent = 'Last known location' + (t && !isNaN(t) ? ' at ' + t.toLocaleTimeString() : '') + '. Please call them now.';
+    }
+    var btns = '';
+    if (d.phone) btns += '<a class="btn call" href="tel:' + esc(d.phone) + '">Call ' + esc(d.name) + '</a>';
+    if (d.latitude != null) btns += '<a class="btn maps" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=' + d.latitude + ',' + d.longitude + '">Directions</a>';
+    btns += '<a class="btn maps" href="tel:112">Call 112</a>';
+    document.getElementById('buttons').innerHTML = btns;
+    document.getElementById('teams').innerHTML = (d.responders && d.responders.length ? d.responders : [{ team: 'Emergency services', status: 'OPEN' }]).map(function (t) {
+      return '<div class="row"><span><b>' + esc(t.team) + '</b>' + (t.unit ? ' - ' + esc(t.unit) : '') + '</span><span>' + esc(STATUS[t.status] || t.status) + (t.etaMinutes ? ' · about ' + t.etaMinutes + ' min' : '') + '</span></div>';
+    }).join('');
+
+    var el = document.getElementById('map');
+    if (d.latitude == null || typeof L === 'undefined') { el.style.display = 'none'; return; }
+    el.style.display = 'block';
+    var pos = [d.latitude, d.longitude];
+    if (!map) {
+      map = L.map('map').setView(pos, 16);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap contributors' }).addTo(map);
+      marker = L.circleMarker(pos, { radius: 12, color: '#C81E1E', weight: 3, fillOpacity: .8 }).addTo(map);
+    } else {
+      marker.setLatLng(pos);
+      map.panTo(pos);
+    }
+  }
+
+  load();
+  setInterval(load, 15000);
+})();
+</script>
+</body>
+</html>

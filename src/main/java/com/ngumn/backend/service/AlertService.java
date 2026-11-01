@@ -40,6 +40,7 @@ public class AlertService {
     /** An alert about a particular hazard report or rule-breaker report (either id may be null). */
     public Alert raise(Vehicle vehicle, User user, AlertType type, RiskLevel level, String message,
                         Double lat, Double lon, Long reportId, Long complaintId) {
+        message = fit(message);
         Alert alert = Alert.builder()
                 .vehicle(vehicle)
                 .user(user)
@@ -73,6 +74,7 @@ public class AlertService {
      */
     public Alert raiseAboutIncident(User user, AlertType type, RiskLevel level, String message,
                                     Double lat, Double lon, Long incidentId) {
+        message = fit(message);
         Alert alert = Alert.builder()
                 .user(user)
                 .type(type)
@@ -158,5 +160,11 @@ public class AlertService {
     private static boolean isFor(Alert alert, User viewer) {
         return viewer.getRole() == Role.ADMIN || alert.getUser() == null
                 || (alert.getUser().getId() != null && alert.getUser().getId().equals(viewer.getId()));
+    }
+
+    /** The message column holds 300 characters - longer texts are cut with "...". */
+    static String fit(String message) {
+        if (message == null) return "";
+        return message.length() <= 300 ? message : message.substring(0, 297) + "...";
     }
 }

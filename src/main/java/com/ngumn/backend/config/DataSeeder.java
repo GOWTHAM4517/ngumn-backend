@@ -44,6 +44,17 @@ public class DataSeeder implements CommandLineRunner {
     @Value("${ngumn.admin.seed-password:admin123}")
     private String adminPassword;
 
+    @Value("${ngumn.admin.seed-name:Raksio Admin}")
+    private String adminName;
+
+    /**
+     * ADMIN_RESET=true: on start-up, set the seeded admin's password to
+     * ADMIN_SEED_PASSWORD again (and make sure it's an active admin) - the way
+     * back in if the admin password is forgotten. Turn it off again afterwards.
+     */
+    @Value("${ngumn.admin.reset:false}")
+    private boolean adminReset;
+
     public DataSeeder(UserRepository userRepository, RoadSpeedLimitRepository roadSpeedLimitRepository,
                       TrafficRuleZoneRepository trafficRuleZoneRepository) {
         this.userRepository = userRepository;
@@ -53,10 +64,21 @@ public class DataSeeder implements CommandLineRunner {
 
     @Override
     public void run(String... args) {
-        if (userRepository.findByEmail(adminEmail.toLowerCase()).isEmpty()) {
+        var existing = userRepository.findByEmail(adminEmail.toLowerCase());
+        if (existing.isPresent() && adminReset) {
+            User admin = existing.get();
+            String salt = PasswordUtil.generateSalt();
+            admin.setPasswordSalt(salt);
+            admin.setPasswordHash(PasswordUtil.hash(adminPassword, salt));
+            admin.setRole(Role.ADMIN);
+            admin.setActive(true);
+            userRepository.save(admin);
+            log.warn("ADMIN_RESET=true: password of admin '{}' was reset. Remove ADMIN_RESET now.", adminEmail);
+        }
+        if (existing.isEmpty()) {
             String salt = PasswordUtil.generateSalt();
             User admin = User.builder()
-                    .name("Raksio Admin")
+                    .name(adminName)
                     .email(adminEmail.toLowerCase())
                     .passwordHash(PasswordUtil.hash(adminPassword, salt))
                     .passwordSalt(salt)

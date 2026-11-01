@@ -73,6 +73,37 @@ public class User {
     @Column(name = "unit_name", length = 120)
     private String unitName;
 
+    /**
+     * The person's own mobile number (optional). When someone adds this
+     * number as an emergency contact, they're told inside Raksio too, not
+     * just by SMS (see SosService).
+     */
+    @Column(length = 20)
+    private String phone;
+
+    /**
+     * Asked to become a responder from the app (Profile > I'm police /
+     * ambulance / fire / a department officer). An admin approves or
+     * rejects it on the dashboard - until then the account stays a citizen.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "requested_team", length = 20, columnDefinition = "varchar(20)")
+    private ResponderTeam requestedTeam;
+
+    @Column(name = "requested_unit", length = 120)
+    private String requestedUnit;
+
+    /** Badge / employee number and anything else the admin should check. */
+    @Column(name = "request_note", length = 300)
+    private String requestNote;
+
+    /** PENDING or REJECTED (null once approved or never asked). */
+    @Column(name = "request_status", length = 12)
+    private String requestStatus;
+
+    @Column(name = "requested_at")
+    private LocalDateTime requestedAt;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 

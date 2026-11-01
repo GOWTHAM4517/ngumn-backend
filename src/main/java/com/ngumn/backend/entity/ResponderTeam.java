@@ -14,7 +14,9 @@ public enum ResponderTeam {
     /** The municipality: open manholes, fallen trees, waterlogging, cattle on the road. */
     MUNICIPAL("Municipality"),
     /** The electricity department: live wires down, streetlights out. */
-    ELECTRICITY("Electricity");
+    ELECTRICITY("Electricity"),
+    /** Fire and rescue (101): vehicle fires, fires near the road, people trapped after a crash. */
+    FIRE("Fire service");
 
     private final String label;
 

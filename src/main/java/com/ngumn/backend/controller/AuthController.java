@@ -35,6 +35,15 @@ public class AuthController {
         return ResponseEntity.noContent().build();
     }
 
+    /** Change my own password (everyone - admins especially, to get off the seeded one). */
+    @PostMapping("/password")
+    public ResponseEntity<java.util.Map<String, Object>> changePassword(@RequestHeader("Authorization") String authorization,
+                                                                        @Valid @RequestBody com.ngumn.backend.dto.PasswordChangeRequest request) {
+        User user = authService.requireUser(authorization);
+        authService.changePassword(user, request.getCurrentPassword(), request.getNewPassword(), authorization);
+        return ResponseEntity.ok(java.util.Map.of("changed", true));
+    }
+
     @GetMapping("/me")
     public ResponseEntity<User> me(@RequestHeader(value = "Authorization", required = false) String authorization) {
         User user = authService.requireUser(authorization);

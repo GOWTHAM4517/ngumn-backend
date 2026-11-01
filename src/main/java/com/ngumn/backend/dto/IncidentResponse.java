@@ -51,9 +51,30 @@ public class IncidentResponse {
     private LocalDateTime acceptedAt;
     private LocalDateTime arrivedAt;
     private LocalDateTime closedAt;
+    /** A complaint to be fixed by a deadline (not help needed right now). */
+    private boolean complaint;
+    /** Complaints: when it should be fixed by. */
+    private LocalDateTime dueAt;
+    /** Complaints: still open past dueAt. */
+    private boolean overdue;
+    /** 0 = never; 1-3 = raised again with the team / admins for waiting too long. */
+    private Integer escalationLevel;
+    /** APP, CRASH, SOS or ADMIN. */
+    private String source;
+    /** 1-5 from the person who asked, once resolved. */
+    private Integer rating;
+    private String ratingComment;
+    /** Responders / admin: passed on to the authority's own system ("webhook SENT, SMS 1/1", "OFF"). */
+    private String forwardStatus;
 
     public static IncidentResponse from(Incident i, Long viewerId, boolean responderView, int priorityNow,
                                         String urgency, Double distanceMeters) {
+        return from(i, viewerId, responderView, priorityNow, urgency, distanceMeters, LocalDateTime.now());
+    }
+
+    public static IncidentResponse from(Incident i, Long viewerId, boolean responderView, int priorityNow,
+                                        String urgency, Double distanceMeters, LocalDateTime now) {
+        boolean active = i.getStatus().active();
         return new IncidentResponse(
                 i.getId(), i.getCaseKey(),
                 i.getType().name(), i.getType().label(),
@@ -69,7 +90,13 @@ public class IncidentResponse {
                 i.getOutcome() != null ? i.getOutcome().name() : null,
                 i.getOutcome() != null ? i.getOutcome().label() : null,
                 i.getNote(), distanceMeters,
-                i.getCreatedAt(), i.getAcceptedAt(), i.getArrivedAt(), i.getClosedAt()
+                i.getCreatedAt(), i.getAcceptedAt(), i.getArrivedAt(), i.getClosedAt(),
+                i.getType().complaint(), i.getDueAt(),
+                active && i.getDueAt() != null && now.isAfter(i.getDueAt()),
+                i.getEscalationLevel() != null ? i.getEscalationLevel() : 0,
+                i.getSource() != null ? i.getSource() : "APP",
+                i.getRating(), i.getRatingComment(),
+                responderView ? i.getForwardStatus() : null
         );
     }
 

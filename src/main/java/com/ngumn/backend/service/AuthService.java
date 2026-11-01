@@ -106,6 +106,33 @@ public class AuthService {
         return authToken.getUser();
     }
 
+    /** Checks the current password, sets the new one, and signs out every other device. */
+    @org.springframework.transaction.annotation.Transactional
+    public void changePassword(User user, String current, String next, String authorizationHeader) {
+        User u = userRepository.findById(user.getId()).orElseThrow(() -> ApiException.unauthorized("Please sign in again"));
+        if (!PasswordUtil.matches(current, u.getPasswordSalt(), u.getPasswordHash())) {
+            throw ApiException.badRequest("Your current password is wrong.");
+        }
+        if (next == null || next.length() < 8) throw ApiException.badRequest("Use at least 8 characters.");
+        if (next.equals(current)) throw ApiException.badRequest("Pick a password different from the current one.");
+        String keep = authorizationHeader != null && authorizationHeader.startsWith("Bearer ") ? authorizationHeader.substring(7).trim() : null;
+        setPassword(u, next, keep);
+    }
+
+    /**
+     * Sets a password (admin reset or own change). Every other saved sign-in
+     * for the account stops working; keepToken (this device) stays signed in.
+     */
+    @org.springframework.transaction.annotation.Transactional
+    public void setPassword(User u, String password, String keepToken) {
+        String salt = PasswordUtil.generateSalt();
+        u.setPasswordSalt(salt);
+        u.setPasswordHash(PasswordUtil.hash(password, salt));
+        userRepository.save(u);
+        authTokenRepository.deleteAll(authTokenRepository.findByUserId(u.getId()).stream()
+                .filter(t -> keepToken == null || !keepToken.equals(t.getToken())).toList());
+    }
+
     public void logout(String authorizationHeader) {
         if (authorizationHeader != null && authorizationHeader.startsWith("Bearer ")) {
             authTokenRepository.deleteByToken(authorizationHeader.substring(7).trim());
