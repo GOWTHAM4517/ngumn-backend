@@ -116,6 +116,7 @@ public class ContactService {
         m.put("requestedTeam", u.getRequestedTeam() != null ? u.getRequestedTeam().name() : null);
         m.put("requestedUnit", u.getRequestedUnit());
         m.put("requestStatus", u.getRequestStatus());
+        m.put("onDuty", Boolean.TRUE.equals(u.getOnDuty()));
         m.put("contactsCount", contactRepository.findByOwnerIdOrderByPositionAsc(u.getId()).size());
         m.put("minContacts", MIN_CONTACTS);
         m.put("contactOf", contactOf(u));
@@ -131,6 +132,17 @@ public class ContactService {
         u.setRequestNote(r.getNote().trim());
         u.setRequestStatus("PENDING");
         u.setRequestedAt(LocalDateTime.now());
+        userRepository.save(u);
+        return profile(u);
+    }
+
+    /** Responders: on duty (help requests come to you first, nearest first) or off duty. */
+    @Transactional
+    public Map<String, Object> setDuty(User user, boolean onDuty) {
+        User u = userRepository.findById(user.getId()).orElseThrow();
+        if (u.getResponderTeam() == null) throw ApiException.badRequest("Only responder accounts go on duty.");
+        u.setOnDuty(onDuty);
+        u.setDutyChangedAt(LocalDateTime.now());
         userRepository.save(u);
         return profile(u);
     }

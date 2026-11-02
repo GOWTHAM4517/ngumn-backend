@@ -20,6 +20,7 @@ import java.util.Map;
  * PUT  /api/me/phone                - my own number ({"phone": "..."}; blank clears)
  * POST /api/me/responder-request    - "I'm police / ambulance / fire / department" (admin approves)
  * DELETE /api/me/responder-request  - withdraw it
+ * PUT  /api/me/duty                 - responders: {"onDuty": true|false}
  */
 @RestController
 public class ProfileController {
@@ -58,6 +59,12 @@ public class ProfileController {
     public ResponseEntity<Map<String, Object>> requestAccess(@RequestHeader("Authorization") String authorization,
                                                              @Valid @RequestBody ResponderAccessRequest request) {
         return ResponseEntity.ok(contactService.requestResponder(authService.requireUser(authorization), request));
+    }
+
+    @PutMapping("/api/me/duty")
+    public ResponseEntity<Map<String, Object>> duty(@RequestHeader("Authorization") String authorization,
+                                                    @RequestBody Map<String, Boolean> body) {
+        return ResponseEntity.ok(contactService.setDuty(authService.requireUser(authorization), Boolean.TRUE.equals(body.get("onDuty"))));
     }
 
     @DeleteMapping("/api/me/responder-request")

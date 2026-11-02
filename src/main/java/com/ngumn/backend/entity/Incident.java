@@ -138,6 +138,17 @@ public class Incident {
     @Column(name = "corridor_event_id")
     private Long corridorEventId;
 
+    /** Ambulance: the hospital the person is being taken to. */
+    @Column(name = "hospital_name", length = 120)
+    private String hospitalName;
+
+    private Double hospitalLatitude;
+    private Double hospitalLongitude;
+
+    /** Asked for by a responder already there ("Request backup") - the request it backs up. */
+    @Column(name = "backup_of_id")
+    private Long backupOfId;
+
     @PrePersist
     protected void onCreate() {
         if (this.createdAt == null) this.createdAt = LocalDateTime.now();

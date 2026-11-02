@@ -7,6 +7,7 @@ import com.ngumn.backend.dto.IncidentResponse;
 import com.ngumn.backend.entity.ResponderTeam;
 import com.ngumn.backend.entity.User;
 import com.ngumn.backend.service.AdminControlService;
+import com.ngumn.backend.service.AnalyticsService;
 import com.ngumn.backend.service.AuthService;
 import com.ngumn.backend.service.IncidentService;
 import com.ngumn.backend.service.SosService;
@@ -31,6 +32,8 @@ import java.util.Map;
  * POST /api/admin/sos/{id}/close
  * POST /api/admin/broadcast                   message to everyone / an area
  * GET  /api/admin/channels                    SMS / call / authority forwarding status
+ * GET  /api/admin/analytics?days=             response times, deadlines, black spots...
+ * GET  /api/admin/units                       responders: on duty, where, handling
  * POST /api/admin/channels/test               test SMS or call
  */
 @RestController
@@ -41,9 +44,11 @@ public class AdminControlController {
     private final IncidentService incidentService;
     private final SosService sosService;
     private final AuthService authService;
+    private final AnalyticsService analyticsService;
 
     public AdminControlController(AdminControlService adminService, IncidentService incidentService,
-                                  SosService sosService, AuthService authService) {
+                                  SosService sosService, AuthService authService, AnalyticsService analyticsService) {
+        this.analyticsService = analyticsService;
         this.adminService = adminService;
         this.incidentService = incidentService;
         this.sosService = sosService;
@@ -115,6 +120,17 @@ public class AdminControlController {
     public ResponseEntity<Map<String, Object>> broadcast(@RequestHeader("Authorization") String authorization,
                                                          @Valid @RequestBody BroadcastRequest request) {
         return ResponseEntity.ok(adminService.broadcast(admin(authorization), request));
+    }
+
+    @GetMapping("/analytics")
+    public ResponseEntity<Map<String, Object>> analytics(@RequestHeader("Authorization") String authorization,
+                                                         @RequestParam(defaultValue = "30") int days) {
+        return ResponseEntity.ok(analyticsService.analytics(admin(authorization), days));
+    }
+
+    @GetMapping("/units")
+    public ResponseEntity<List<Map<String, Object>>> units(@RequestHeader("Authorization") String authorization) {
+        return ResponseEntity.ok(analyticsService.units(admin(authorization)));
     }
 
     @GetMapping("/channels")

@@ -1,5 +1,6 @@
 package com.ngumn.backend.repository;
 
+import com.ngumn.backend.entity.ReportType;
 import com.ngumn.backend.entity.RoadReport;
 import com.ngumn.backend.entity.ReportStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -20,6 +21,9 @@ public interface RoadReportRepository extends JpaRepository<RoadReport, Long> {
     List<RoadReport> findByStatusAndTimestampAfter(ReportStatus status, LocalDateTime after);
     long countByReporterIdAndStatus(Long reporterId, ReportStatus status);
     List<RoadReport> findByExpiresAtIsNull();
+
+    /** Reports of one kind since a time (accident hotspots - see HotspotService). */
+    List<RoadReport> findByTypeAndTimestampAfter(ReportType type, LocalDateTime after);
 
     /**
      * Stores just the comment count. Saving the whole report instead could

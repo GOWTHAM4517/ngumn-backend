@@ -1,5 +1,7 @@
 package com.ngumn.backend.controller;
 
+import com.ngumn.backend.dto.BackupRequest;
+import com.ngumn.backend.dto.HospitalRequest;
 import com.ngumn.backend.dto.IncidentRequest;
 import com.ngumn.backend.dto.IncidentResponse;
 import com.ngumn.backend.dto.IncidentUpdateRequest;
@@ -80,6 +82,24 @@ public class IncidentController {
                                                    @Valid @RequestBody IncidentUpdateRequest request) {
         User user = authService.requireUser(authorization);
         return ResponseEntity.ok(incidentService.update(user, id, request));
+    }
+
+    /** A responder on it asks another team (or unit) to come too. */
+    @PostMapping("/{id}/backup")
+    public ResponseEntity<IncidentResponse> backup(@RequestHeader("Authorization") String authorization,
+                                                   @PathVariable Long id,
+                                                   @Valid @RequestBody BackupRequest request) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(incidentService.backup(user, id, request));
+    }
+
+    /** Ambulance: which hospital it's taking the person to. */
+    @PostMapping("/{id}/hospital")
+    public ResponseEntity<IncidentResponse> hospital(@RequestHeader("Authorization") String authorization,
+                                                     @PathVariable Long id,
+                                                     @Valid @RequestBody HospitalRequest request) {
+        User user = authService.requireUser(authorization);
+        return ResponseEntity.ok(incidentService.hospital(user, id, request));
     }
 
     /** The person who asked rates a resolved request or complaint. */

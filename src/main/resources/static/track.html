@@ -15,11 +15,12 @@
   .banner { background: var(--red); color: #fff; border-radius: 16px; padding: 16px 18px; }
   .banner.ok { background: var(--green); }
   .banner.closed { background: #46586D; }
+  .banner.info { background: #1E5AA8; }
   .banner h1 { font-size: 20px; margin: 0 0 4px; }
   .banner p { margin: 0; font-size: 14px; opacity: .92; line-height: 1.45; }
   #map { height: 52vh; min-height: 280px; border-radius: 16px; margin: 14px 0; border: 1px solid var(--border); }
   .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .buttons a:nth-child(3):last-child { grid-column: span 2; }
+  .buttons a:nth-child(3):last-child, .buttons a:only-child { grid-column: span 2; }
   a.btn { display: block; text-align: center; padding: 14px; border-radius: 12px; font-weight: 700; text-decoration: none; font-size: 15px; }
   a.call { background: var(--red); color: #fff; }
   a.maps { background: var(--card); color: var(--text); border: 1px solid var(--border); }
@@ -35,8 +36,9 @@
   <div class="banner" id="banner"><h1 id="headline">Loading…</h1><p id="sub"></p></div>
   <div id="map"></div>
   <div class="buttons" id="buttons"></div>
-  <div class="card"><h2>Help</h2><div id="teams"><div class="row"><span>Finding out…</span></div></div></div>
-  <p class="muted">This page was sent by Raksio because you are an emergency contact. It updates by itself every 15 seconds and stops showing the location once the emergency is over. If someone's life is in danger, call <a href="tel:112">112</a>.</p>
+  <div class="card" id="hospitalCard" style="display:none"><h2>Hospital</h2><div id="hospital"></div></div>
+  <div class="card" id="helpCard"><h2>Help</h2><div id="teams"><div class="row"><span>Finding out…</span></div></div></div>
+  <p class="muted">This page was sent by Raksio because you are an emergency contact. It updates by itself every 15 seconds and stops showing the location once it's over. If someone's life is in danger, call <a href="tel:112">112</a>.</p>
 </div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
@@ -60,23 +62,47 @@
   function show(d) {
     var banner = document.getElementById('banner');
     document.getElementById('headline').textContent = d.headline;
-    if (d.status === 'CANCELLED') {
+    if (d.status === 'CANCELLED' && d.kind === 'SHARE') {
+      banner.className = 'banner closed';
+      document.getElementById('sub').textContent = d.name + ' stopped sharing their location.';
+    } else if (d.status === 'CANCELLED') {
       banner.className = 'banner ok';
-      document.getElementById('sub').textContent = d.name + ' said they are OK - it was a false alarm.';
+      document.getElementById('sub').textContent = d.kind === 'CHECKIN'
+        ? d.name + ' has checked in - they are safe.'
+        : d.name + ' said they are OK - it was a false alarm.';
     } else if (d.status !== 'ACTIVE') {
       banner.className = 'banner closed';
-      document.getElementById('sub').textContent = 'This emergency is over, so the location is no longer shown.';
+      document.getElementById('sub').textContent = d.kind === 'SHARE'
+        ? 'Location sharing has ended.'
+        : 'This emergency is over, so the location is no longer shown.';
     } else {
-      banner.className = 'banner';
       var t = d.updatedAt ? new Date(d.updatedAt) : null;
-      document.getElementById('sub').textContent = 'Last known location' + (t && !isNaN(t) ? ' at ' + t.toLocaleTimeString() : '') + '. Please call them now.';
+      var at = t && !isNaN(t) ? ' at ' + t.toLocaleTimeString() : '';
+      if (d.kind === 'SHARE') {
+        banner.className = 'banner info';
+        document.getElementById('sub').textContent = 'Live location' + at + '. This is not an emergency.';
+      } else {
+        banner.className = 'banner';
+        document.getElementById('sub').textContent = 'Last known location' + at + '. Please call them now.';
+      }
     }
     var btns = '';
     if (d.phone) btns += '<a class="btn call" href="tel:' + esc(d.phone) + '">Call ' + esc(d.name) + '</a>';
     if (d.latitude != null) btns += '<a class="btn maps" target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=' + d.latitude + ',' + d.longitude + '">Directions</a>';
-    btns += '<a class="btn maps" href="tel:112">Call 112</a>';
+    // Sharing a location isn't an emergency - no "Call 112" there.
+    if (d.kind !== 'SHARE') btns += '<a class="btn maps" href="tel:112">Call 112</a>';
     document.getElementById('buttons').innerHTML = btns;
-    document.getElementById('teams').innerHTML = (d.responders && d.responders.length ? d.responders : [{ team: 'Emergency services', status: 'OPEN' }]).map(function (t) {
+    var hc = document.getElementById('hospitalCard');
+    if (d.hospital && d.hospital.name) {
+      hc.style.display = 'block';
+      document.getElementById('hospital').innerHTML = '<div class="row"><span><b>' + esc(d.hospital.name) + '</b></span>' +
+        (d.hospital.latitude != null ? '<span><a target="_blank" rel="noopener" href="https://www.google.com/maps/dir/?api=1&destination=' + d.hospital.latitude + ',' + d.hospital.longitude + '">Directions</a></span>' : '') + '</div>';
+    } else {
+      hc.style.display = 'none';
+    }
+    var hasTeams = d.responders && d.responders.length;
+    document.getElementById('helpCard').style.display = hasTeams || d.kind === 'CRASH' || d.kind === 'SOS' ? 'block' : 'none';
+    document.getElementById('teams').innerHTML = (hasTeams ? d.responders : [{ team: 'Emergency services', status: 'OPEN' }]).map(function (t) {
       return '<div class="row"><span><b>' + esc(t.team) + '</b>' + (t.unit ? ' - ' + esc(t.unit) : '') + '</span><span>' + esc(STATUS[t.status] || t.status) + (t.etaMinutes ? ' · about ' + t.etaMinutes + ' min' : '') + '</span></div>';
     }).join('');
 

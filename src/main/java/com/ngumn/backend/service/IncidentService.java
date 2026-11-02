@@ -1,6 +1,10 @@
 package com.ngumn.backend.service;
 
 import com.ngumn.backend.dto.AdminIncidentAction;
+import com.ngumn.backend.dto.BackupRequest;
+import com.ngumn.backend.dto.HospitalRequest;
+import com.ngumn.backend.event.HospitalChosenEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import com.ngumn.backend.dto.EmergencyStartRequest;
 import com.ngumn.backend.dto.IncidentRequest;
 import com.ngumn.backend.dto.IncidentResponse;
@@ -92,6 +96,7 @@ public class IncidentService {
     private final VehicleRepository vehicleRepository;
     private final EmergencyService emergencyService;
     private final AuthorityForwarder forwarder;
+    private final ApplicationEventPublisher events;
     private final ExecutorService forwardPool = Executors.newFixedThreadPool(2, r -> {
         Thread t = new Thread(r, "authority-forward");
         t.setDaemon(true);
@@ -101,7 +106,7 @@ public class IncidentService {
     public IncidentService(IncidentRepository incidentRepository, UserRepository userRepository,
                            AlertService alertService, NgumnWebSocketHandler webSocketHandler,
                            VehicleRepository vehicleRepository, EmergencyService emergencyService,
-                           AuthorityForwarder forwarder) {
+                           AuthorityForwarder forwarder, ApplicationEventPublisher events) {
         this.incidentRepository = incidentRepository;
         this.userRepository = userRepository;
         this.alertService = alertService;
@@ -109,6 +114,7 @@ public class IncidentService {
         this.vehicleRepository = vehicleRepository;
         this.emergencyService = emergencyService;
         this.forwarder = forwarder;
+        this.events = events;
     }
 
     @PreDestroy
@@ -300,6 +306,12 @@ public class IncidentService {
         incident.setStatus(IncidentStatus.ACCEPTED);
         incident.setAssignee(responder);
         incident.setAcceptedAt(now());
+        if (!Boolean.TRUE.equals(responder.getOnDuty())) {
+            // Taking a request means they're working.
+            responder.setOnDuty(true);
+            responder.setDutyChangedAt(now());
+            userRepository.save(responder);
+        }
         Integer eta = null;
         if (lat != null && lng != null) {
             double km = GeoUtil.distanceMeters(lat, lng, incident.getLatitude(), incident.getLongitude()) / 1000.0;
@@ -745,15 +757,139 @@ public class IncidentService {
     }
 
     /** Everyone on the team (except whoever asked) hears about a request that's waiting. */
+    /**
+     * Tells the team about a request that's waiting: the units on duty (or
+     * everyone on the team when nobody is), each with how far away it is,
+     * nearest first - the three nearest are told they're among the closest.
+     */
     private void tellTeam(Incident incident, User except) {
-        String text = summary(incident) + (incident.getDescription() != null ? ". \"" + incident.getDescription() + "\"" : ".")
-                + " Open Raksio to accept it.";
-        RiskLevel level = priorityNow(incident) >= HIGH ? RiskLevel.HIGH : priorityNow(incident) >= MEDIUM ? RiskLevel.MEDIUM : RiskLevel.LOW;
-        for (User responder : userRepository.findByResponderTeamAndActiveTrue(incident.getTeam())) {
-            if (except != null && responder.getId().equals(except.getId())) continue;
-            alertService.raiseAboutIncident(responder, AlertType.HIGH_RISK, level, NEW_REQUEST + ": " + text,
-                    incident.getLatitude(), incident.getLongitude(), incident.getId());
+        List<User> team = userRepository.findByResponderTeamAndActiveTrue(incident.getTeam()).stream()
+                .filter(r -> except == null || !r.getId().equals(except.getId()))
+                .toList();
+        List<User> onDuty = team.stream().filter(r -> Boolean.TRUE.equals(r.getOnDuty())).toList();
+        List<User> recipients = onDuty.isEmpty() ? team : onDuty;
+        Map<Long, Double> distance = new HashMap<>();
+        for (User r : recipients) {
+            double[] at = positionOf(r);
+            if (at != null) distance.put(r.getId(), GeoUtil.distanceMeters(at[0], at[1], incident.getLatitude(), incident.getLongitude()));
         }
+        List<User> ordered = recipients.stream()
+                .sorted(Comparator.comparing((User r) -> distance.getOrDefault(r.getId(), Double.MAX_VALUE)))
+                .toList();
+        String what = summary(incident) + (incident.getDescription() != null ? ". \"" + incident.getDescription() + "\"" : ".");
+        int p = priorityNow(incident);
+        RiskLevel level = p >= HIGH ? RiskLevel.HIGH : p >= MEDIUM ? RiskLevel.MEDIUM : RiskLevel.LOW;
+        int rank = 0;
+        for (User r : ordered) {
+            Double d = distance.get(r.getId());
+            String where = d != null ? " " + distanceText(d) + " from you" + (rank < 3 && ordered.size() > 1 ? " - one of the nearest units." : ".") : "";
+            alertService.raiseAboutIncident(r, AlertType.HIGH_RISK, level, NEW_REQUEST + ": " + what + where + " Open Raksio to accept it.",
+                    incident.getLatitude(), incident.getLongitude(), incident.getId());
+            rank++;
+        }
+    }
+
+    /** Where a responder is now - their latest live position from the last 2 hours, or null. */
+    public double[] positionOf(User u) {
+        LocalDateTime fresh = now().minusHours(2);
+        return vehicleRepository.findByOwnerId(u.getId()).stream()
+                .filter(v -> !Boolean.TRUE.equals(v.getIsSimulated()) && v.getCurrentLatitude() != null && v.getCurrentLongitude() != null)
+                .filter(v -> v.getLastLocationUpdate() != null && v.getLastLocationUpdate().isAfter(fresh))
+                .max(Comparator.comparing(Vehicle::getLastLocationUpdate))
+                .map(v -> new double[]{v.getCurrentLatitude(), v.getCurrentLongitude()})
+                .orElse(null);
+    }
+
+    /** "450 m", "2.3 km". */
+    static String distanceText(double meters) {
+        if (meters < 1000) return Math.max(10, Math.round(meters / 10.0) * 10) + " m";
+        return String.format(Locale.ROOT, "%.1f km", meters / 1000.0);
+    }
+
+    // ------------------------------------------------------------------ backup and hospital
+
+    /**
+     * A responder on a request asks another team - or another unit of their
+     * own - to come too ("Request backup"): a new request for that team at
+     * the same spot, linked to this one, urgent from the start.
+     */
+    @Transactional
+    public IncidentResponse backup(User responder, Long id, BackupRequest r) {
+        ResponderTeam mine = requireResponder(responder);
+        Incident incident = find(id);
+        if (incident.getTeam() != mine) throw ApiException.forbidden("This request is for the " + incident.getTeam().label() + ".");
+        if (!incident.getStatus().active()) throw ApiException.badRequest("This request is already closed.");
+        if (incident.getCaseKey() == null) {
+            incident.setCaseKey(UUID.randomUUID().toString().substring(0, 12));
+            incidentRepository.save(incident);
+        }
+        String caseKey = incident.getCaseKey();
+        Optional<Incident> already = incidentRepository.findByCaseKey(caseKey).stream()
+                .filter(i -> !i.getId().equals(incident.getId()) && i.getTeam() == r.getTeam() && i.getStatus().active())
+                .findFirst();
+        if (already.isPresent()) return view(responder, already.get(), null);
+
+        String unit = unitOf(responder);
+        String note = r.getNote() != null && !r.getNote().isBlank() ? r.getNote().trim() : null;
+        String description = "Backup asked by " + unit + (note != null ? ": " + note : "")
+                + (incident.getDescription() != null ? ". " + incident.getDescription() : "");
+        Incident b = incidentRepository.save(Incident.builder()
+                .reporter(incident.getReporter())
+                .type(incident.getType())
+                .team(r.getTeam())
+                .caseKey(caseKey)
+                .latitude(incident.getLatitude())
+                .longitude(incident.getLongitude())
+                .vehicleKind(incident.getVehicleKind())
+                .blocking(incident.getBlocking())
+                .injured(incident.getInjured())
+                .description(description.length() > 500 ? description.substring(0, 500) : description)
+                .status(IncidentStatus.OPEN)
+                .priority(Math.min(100, Math.max(priorityNow(incident), 60)))
+                .source("BACKUP")
+                .sosEventId(incident.getSosEventId())
+                .backupOfId(incident.getId())
+                .escalationLevel(0)
+                .build());
+        tellTeam(b, responder);
+        note(incident.getReporter(), b, ON_THE_WAY, unit + " asked the " + r.getTeam().label().toLowerCase(Locale.ROOT) + " to come too.");
+        changed(b);
+        forward(b, NEW_REQUEST);
+        return view(responder, b, null);
+    }
+
+    /**
+     * Ambulance: the hospital it's taking the person to. The person is told,
+     * the police unit on the same case is told, and - when the request came
+     * from a crash or SOS - their emergency contacts too (SosService).
+     */
+    @Transactional
+    public IncidentResponse hospital(User responder, Long id, HospitalRequest r) {
+        requireResponder(responder);
+        Incident incident = find(id);
+        if (!isAssignee(incident, responder.getId())) throw ApiException.forbidden("Accept this request first.");
+        if (!incident.getStatus().active()) throw ApiException.badRequest("This request is already closed.");
+        String name = r.getName().trim();
+        if (name.length() > 120) name = name.substring(0, 120);
+        incident.setHospitalName(name);
+        incident.setHospitalLatitude(r.getLatitude());
+        incident.setHospitalLongitude(r.getLongitude());
+        String noteText = "Taking them to " + name;
+        incident.setNote(noteText.length() > 300 ? noteText.substring(0, 300) : noteText);
+        incidentRepository.save(incident);
+        String unit = unitOf(responder);
+        note(incident.getReporter(), incident, ON_THE_WAY, unit + " is taking you to " + name + ".");
+        if (incident.getCaseKey() != null) {
+            for (Incident other : incidentRepository.findByCaseKey(incident.getCaseKey())) {
+                if (other.getId().equals(incident.getId()) || other.getAssignee() == null || !other.getStatus().active()) continue;
+                note(other.getAssignee(), other, ARRIVED, unit + " is taking the injured person to " + name + ".");
+            }
+        }
+        if (incident.getSosEventId() != null) {
+            events.publishEvent(new HospitalChosenEvent(incident.getSosEventId(), name, unit, r.getLatitude(), r.getLongitude()));
+        }
+        changed(incident);
+        return view(responder, incident, null);
     }
 
     private void note(User to, Incident incident, String headline, String text) {

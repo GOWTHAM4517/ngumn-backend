@@ -4,6 +4,7 @@ import com.ngumn.backend.dto.IncidentRequest;
 import com.ngumn.backend.dto.IncidentResponse;
 import com.ngumn.backend.dto.SosRequest;
 import com.ngumn.backend.entity.*;
+import com.ngumn.backend.event.HospitalChosenEvent;
 import com.ngumn.backend.exception.ApiException;
 import com.ngumn.backend.notify.NotifyGateway;
 import com.ngumn.backend.repository.*;
@@ -11,6 +12,7 @@ import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.security.SecureRandom;
@@ -46,6 +48,8 @@ public class SosService {
     private static final Logger log = LoggerFactory.getLogger(SosService.class);
     /** The live-location link stops showing a position after this. */
     static final Duration TRACK_WINDOW = Duration.ofHours(24);
+    /** "Share live location" lasts an hour on the phone; the link stops a little after that even if the phone never says so. */
+    static final Duration SHARE_WINDOW = Duration.ofMinutes(65);
     /** Pressing again within this while one is active returns the same one. */
     static final Duration REPEAT_WINDOW = Duration.ofMinutes(30);
     static final Set<String> REASONS = Set.of("ACCIDENT", "MEDICAL", "FIRE", "UNSAFE");
@@ -99,8 +103,11 @@ public class SosService {
 
     public Map<String, Object> trigger(User user, SosRequest r, String requestBase) {
         String kind = r.getKind() == null ? "" : r.getKind().trim().toUpperCase(Locale.ROOT);
-        if (!kind.equals("CRASH") && !kind.equals("SOS")) throw ApiException.badRequest("kind must be CRASH or SOS");
+        if (!kind.equals("CRASH") && !kind.equals("SOS") && !kind.equals("CHECKIN") && !kind.equals("SHARE")) {
+            throw ApiException.badRequest("kind must be CRASH, SOS, CHECKIN or SHARE");
+        }
         String reason = kind.equals("CRASH") ? "ACCIDENT"
+                : kind.equals("CHECKIN") || kind.equals("SHARE") ? "UNSAFE"
                 : r.getReason() == null || r.getReason().isBlank() ? "ACCIDENT" : r.getReason().trim().toUpperCase(Locale.ROOT);
         if (!REASONS.contains(reason)) throw ApiException.badRequest("Unknown SOS reason: " + r.getReason());
         if (r.getLatitude() < -90 || r.getLatitude() > 90 || r.getLongitude() < -180 || r.getLongitude() > 180) {
@@ -109,7 +116,9 @@ public class SosService {
         String base = base(requestBase);
 
         // Same person, still active, a few minutes ago: the same alert (a retry after no signal, a double tap).
+        // (Only the same kind - a crash during an active Safe Walk alert still calls for help.)
         Optional<SosEvent> running = sosRepository.findByUserIdAndStatus(user.getId(), "ACTIVE").stream()
+                .filter(e -> e.getKind().equals(kind))
                 .filter(e -> e.getCreatedAt().isAfter(LocalDateTime.now().minus(REPEAT_WINDOW)))
                 .max(Comparator.comparing(SosEvent::getCreatedAt));
         if (running.isPresent()) return view(running.get(), base, true);
@@ -126,25 +135,29 @@ public class SosService {
                 .trackToken(token())
                 .build());
 
-        // 1. Help requests to the right teams.
-        IncidentRequest help = new IncidentRequest();
-        help.setType(IncidentType.valueOf(reason));
-        help.setLatitude(r.getLatitude());
-        help.setLongitude(r.getLongitude());
-        help.setVehicleKind(r.getVehicleKind());
-        if (reason.equals("ACCIDENT")) {
-            // Nobody answered, or they pressed SOS for an accident - assume someone is hurt so an ambulance comes too.
-            help.setInjured(1);
-        }
-        help.setDescription(describe(event, user));
+        // 1. Help requests to the right teams. (A missed Safe Walk check-in only
+        //    tells the contacts - they know the person and can call them first.
+        //    Sharing live location isn't an emergency at all.)
         List<IncidentResponse> requests = List.of();
-        try {
-            requests = incidentService.create(user, help, kind, event.getId());
-            if (!requests.isEmpty()) event.setCaseKey(requests.get(0).getCaseKey());
-            event = sosRepository.save(event);
-        } catch (RuntimeException e) {
-            // Contacts must still be told even if the help request failed.
-            log.error("SOS {}: couldn't create help requests: {}", event.getId(), e.toString());
+        if (!kind.equals("CHECKIN") && !kind.equals("SHARE")) {
+            IncidentRequest help = new IncidentRequest();
+            help.setType(IncidentType.valueOf(reason));
+            help.setLatitude(r.getLatitude());
+            help.setLongitude(r.getLongitude());
+            help.setVehicleKind(r.getVehicleKind());
+            if (reason.equals("ACCIDENT")) {
+                // Nobody answered, or they pressed SOS for an accident - assume someone is hurt so an ambulance comes too.
+                help.setInjured(1);
+            }
+            help.setDescription(describe(event, user));
+            try {
+                requests = incidentService.create(user, help, kind, event.getId());
+                if (!requests.isEmpty()) event.setCaseKey(requests.get(0).getCaseKey());
+                event = sosRepository.save(event);
+            } catch (RuntimeException e) {
+                // Contacts must still be told even if the help request failed.
+                log.error("SOS {}: couldn't create help requests: {}", event.getId(), e.toString());
+            }
         }
 
         // 2. Contacts - in the background so the phone gets its answer at once.
@@ -188,6 +201,8 @@ public class SosService {
                     .findFirst()
                     .ifPresent(i -> incidentService.cancel(user, i.getId()));
         }
+        // Stopping a location share isn't a false alarm - nobody needs telling.
+        if ("SHARE".equals(e.getKind())) return view(e, base, false);
         pool.submit(() -> {
             try {
                 notifyContacts(e, base, true);
@@ -234,11 +249,16 @@ public class SosService {
         return view(e, base(requestBase), false);
     }
 
-    /** Closes alerts left active for a day (EscalationService). */
+    /** How long the link shows a position: an hour for a location share, a day for an emergency. */
+    static Duration window(SosEvent e) {
+        return "SHARE".equals(e.getKind()) ? SHARE_WINDOW : TRACK_WINDOW;
+    }
+
+    /** Closes alerts left active for a day, and location shares after an hour (EscalationService). */
     public int closeStale() {
         int n = 0;
         for (SosEvent e : sosRepository.findByCreatedAtAfterOrderByCreatedAtDesc(LocalDateTime.now().minusDays(7))) {
-            if (e.active() && e.getCreatedAt().isBefore(LocalDateTime.now().minus(TRACK_WINDOW))) {
+            if (e.active() && e.getCreatedAt().isBefore(LocalDateTime.now().minus(window(e)))) {
                 e.setStatus("CLOSED");
                 e.setClosedAt(LocalDateTime.now());
                 sosRepository.save(e);
@@ -257,7 +277,7 @@ public class SosService {
      */
     public Map<String, Object> track(String token) {
         SosEvent e = sosRepository.findByTrackToken(token).orElseThrow(() -> ApiException.notFound("This link has expired or is wrong."));
-        boolean live = e.active() && e.getCreatedAt().isAfter(LocalDateTime.now().minus(TRACK_WINDOW));
+        boolean live = e.active() && e.getCreatedAt().isAfter(LocalDateTime.now().minus(window(e)));
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("name", firstName(e.getUser().getName()));
         m.put("kind", e.getKind());
@@ -275,6 +295,13 @@ public class SosService {
         List<Map<String, Object>> teams = new ArrayList<>();
         if (e.getCaseKey() != null) {
             for (Incident i : incidentRepository.findByCaseKey(e.getCaseKey())) {
+                if (i.getHospitalName() != null && !m.containsKey("hospital")) {
+                    Map<String, Object> h = new LinkedHashMap<>();
+                    h.put("name", i.getHospitalName());
+                    h.put("latitude", i.getHospitalLatitude());
+                    h.put("longitude", i.getHospitalLongitude());
+                    m.put("hospital", h);
+                }
                 Map<String, Object> t = new LinkedHashMap<>();
                 t.put("team", i.getTeam().label());
                 t.put("status", i.getStatus().name());
@@ -304,7 +331,16 @@ public class SosService {
         String sms;
         String spoken;
         String inApp;
-        if (falseAlarm) {
+        if ("SHARE".equals(e.getKind()) && !falseAlarm) {
+            sms = "Raksio: " + name + " is sharing their live location with you (not an emergency): " + link;
+            spoken = null;
+            inApp = "Location shared: " + firstName(name) + " is sharing their live location with you. " + link;
+        } else if ("CHECKIN".equals(e.getKind()) && falseAlarm) {
+            // The Safe Walk alert went out, then they tapped "I'm safe".
+            sms = "Raksio: " + name + " has checked in - they are safe. Sorry for the worry.";
+            spoken = null;
+            inApp = "Safe Walk: " + firstName(name) + " has checked in and is safe.";
+        } else if (falseAlarm) {
             sms = "Raksio: " + name + " is OK - the earlier emergency alert was a false alarm. Help has been called off.";
             spoken = null;
             inApp = "SOS cancelled: " + name + " says they are OK. The earlier alert was a false alarm.";
@@ -323,8 +359,9 @@ public class SosService {
             List<User> appUsers = userRepository.findByPhone(c.getPhone()).stream()
                     .filter(u -> !u.getId().equals(user.getId()) && Boolean.TRUE.equals(u.getActive())).toList();
             for (User u : appUsers) {
-                alertService.raiseAboutIncident(u, AlertType.HIGH_RISK, falseAlarm ? RiskLevel.LOW : RiskLevel.HIGH,
-                        inApp, e.getLatitude(), e.getLongitude(), null);
+                RiskLevel level = falseAlarm || "SHARE".equals(e.getKind()) ? RiskLevel.LOW
+                        : "CHECKIN".equals(e.getKind()) ? RiskLevel.MEDIUM : RiskLevel.HIGH;
+                alertService.raiseAboutIncident(u, AlertType.HIGH_RISK, level, inApp, e.getLatitude(), e.getLongitude(), null);
                 record(e, who, c.getPhone(), "IN_APP", "SENT", "Raksio account: " + u.getName());
             }
             // SMS
@@ -336,6 +373,38 @@ public class SosService {
                 record(e, who, c.getPhone(), "CALL", call.status().name(), call.detail());
             }
         }
+    }
+
+    /**
+     * The ambulance picked a hospital (IncidentService.hospital): tell the
+     * contacts where to go - in Raksio and by SMS (no call).
+     */
+    @EventListener
+    public void onHospitalChosen(HospitalChosenEvent h) {
+        SosEvent e = h.sosEventId() != null ? sosRepository.findById(h.sosEventId()).orElse(null) : null;
+        if (e == null) return;
+        pool.submit(() -> {
+            try {
+                User user = e.getUser();
+                String map = h.latitude() != null && h.longitude() != null
+                        ? " Map: https://maps.google.com/?q=" + fmt(h.latitude()) + "," + fmt(h.longitude()) : "";
+                String sms = "Raksio update: " + user.getName() + " is being taken to " + h.hospitalName() + " by " + h.unit() + "." + map;
+                String inApp = "SOS update: " + firstName(user.getName()) + " is being taken to " + h.hospitalName() + " by " + h.unit() + ".";
+                for (EmergencyContact c : contactRepository.findByOwnerIdOrderByPositionAsc(user.getId())) {
+                    String who = c.getName() + (c.getRelation() != null ? " (" + c.getRelation() + ")" : "");
+                    for (User u : userRepository.findByPhone(c.getPhone())) {
+                        if (u.getId().equals(user.getId()) || !Boolean.TRUE.equals(u.getActive())) continue;
+                        alertService.raiseAboutIncident(u, AlertType.HIGH_RISK, RiskLevel.MEDIUM, inApp,
+                                h.latitude() != null ? h.latitude() : e.getLatitude(), h.longitude() != null ? h.longitude() : e.getLongitude(), null);
+                        record(e, who, c.getPhone(), "IN_APP", "SENT", "Hospital update");
+                    }
+                    NotifyGateway.Result s = gateway.sms(c.getPhone(), sms);
+                    record(e, who, c.getPhone(), "SMS", s.status().name(), "Hospital update: " + (s.detail() != null ? s.detail() : ""));
+                }
+            } catch (Exception ex) {
+                log.error("SOS {}: hospital update failed: {}", e.getId(), ex.toString());
+            }
+        });
     }
 
     private void record(SosEvent e, String name, String phone, String channel, String status, String detail) {
@@ -417,6 +486,10 @@ public class SosService {
     }
 
     static String what(SosEvent e) {
+        if ("SHARE".equals(e.getKind())) return "is sharing their live location with you.";
+        if ("CHECKIN".equals(e.getKind())) {
+            return "started a Safe Walk in Raksio and didn't check in on time.";
+        }
         if ("CRASH".equals(e.getKind())) {
             return "may have been in a road accident" + (e.getSpeedKmh() != null && e.getSpeedKmh() > 0 ? " (was going about " + e.getSpeedKmh() + " km/h)" : "")
                     + " and did not answer Raksio's \"Are you OK?\".";
@@ -430,6 +503,8 @@ public class SosService {
     }
 
     static String helpLine(SosEvent e) {
+        if ("SHARE".equals(e.getKind())) return "";
+        if ("CHECKIN".equals(e.getKind())) return "If you can't reach them, call 112.";
         if ("CRASH".equals(e.getKind())) return "The police and an ambulance have been alerted.";
         return switch (e.getReason() == null ? "ACCIDENT" : e.getReason()) {
             case "MEDICAL" -> "An ambulance has been alerted.";
@@ -441,6 +516,8 @@ public class SosService {
 
     private static String headline(SosEvent e) {
         String first = firstName(e.getUser().getName());
+        if ("SHARE".equals(e.getKind())) return first + " is sharing their live location";
+        if ("CHECKIN".equals(e.getKind())) return first + " didn't check in from their Safe Walk";
         if ("CRASH".equals(e.getKind())) return first + " may have been in a road accident";
         return switch (e.getReason() == null ? "ACCIDENT" : e.getReason()) {
             case "MEDICAL" -> first + " needs an ambulance";

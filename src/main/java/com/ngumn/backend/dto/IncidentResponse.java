@@ -66,6 +66,12 @@ public class IncidentResponse {
     private String ratingComment;
     /** Responders / admin: passed on to the authority's own system ("webhook SENT, SMS 1/1", "OFF"). */
     private String forwardStatus;
+    /** Ambulance: the hospital the person is being taken to. */
+    private String hospitalName;
+    private Double hospitalLatitude;
+    private Double hospitalLongitude;
+    /** A backup request: the request it backs up. */
+    private Long backupOfId;
 
     public static IncidentResponse from(Incident i, Long viewerId, boolean responderView, int priorityNow,
                                         String urgency, Double distanceMeters) {
@@ -96,7 +102,9 @@ public class IncidentResponse {
                 i.getEscalationLevel() != null ? i.getEscalationLevel() : 0,
                 i.getSource() != null ? i.getSource() : "APP",
                 i.getRating(), i.getRatingComment(),
-                responderView ? i.getForwardStatus() : null
+                responderView ? i.getForwardStatus() : null,
+                i.getHospitalName(), i.getHospitalLatitude(), i.getHospitalLongitude(),
+                i.getBackupOfId()
         );
     }
 

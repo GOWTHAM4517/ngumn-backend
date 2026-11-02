@@ -33,7 +33,7 @@ public class SosEvent {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    /** CRASH (detected) or SOS (pressed). */
+    /** CRASH (detected), SOS (pressed), CHECKIN (missed Safe Walk check-in) or SHARE (live location shared, not an emergency). */
     @Column(nullable = false, length = 10)
     private String kind;
 

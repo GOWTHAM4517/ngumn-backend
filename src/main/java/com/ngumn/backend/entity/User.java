@@ -104,6 +104,17 @@ public class User {
     @Column(name = "requested_at")
     private LocalDateTime requestedAt;
 
+    /**
+     * Responders: on duty right now. Help requests go to on-duty units first,
+     * nearest first (IncidentService.tellTeam). Accepting a request puts a
+     * unit on duty.
+     */
+    @Column(name = "on_duty")
+    private Boolean onDuty;
+
+    @Column(name = "duty_changed_at")
+    private LocalDateTime dutyChangedAt;
+
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
