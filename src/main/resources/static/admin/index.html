@@ -225,6 +225,11 @@
     <!-- EMERGENCIES -->
     <div class="tab" id="tab-emergencies">
       <section>
+        <h2>Stolen vehicles <span class="badge" id="carCount">0</span></h2>
+        <div class="sub" style="margin:-4px 0 10px">Reported through Car guard. Each one is a police help request; cars with a GPS tracker show their live position, and Raksio users near it are asked to look out (sightings and rule-breaker reports naming its plate show here).</div>
+        <div id="carList"><div class="empty">Loading…</div></div>
+      </section>
+      <section>
         <h2>Crash &amp; SOS alerts <span class="badge" id="sosCount">0</span></h2>
         <div class="sub" style="margin:-4px 0 10px">Each alert made help requests for the right teams and tried to reach every emergency contact - in the Raksio app, by SMS and by an automatic call. What really happened is shown per contact.</div>
         <div class="toolbar"><select id="sosDays"><option value="1">Last 24 hours</option><option value="7" selected>Last 7 days</option><option value="30">Last 30 days</option></select></div>
@@ -499,8 +504,9 @@
       var parts = [tile(s.totalUsers, 'Users'), tile(s.totalVehicles, 'Vehicles'), tile(s.activeEmergencies, 'Green Corridors'),
         tile(s.connectedLiveClients, 'Live connections')];
       if (!isAdmin()) { $('tiles').innerHTML = parts.join(''); return; }
-      Promise.all([api('/api/admin/incidents/open'), api('/api/admin/sos?days=1'), api('/api/admin/users?filter=requests')]).then(function (r) {
-        var c = r[0], sos = r[1], reqs = r[2];
+      Promise.all([api('/api/admin/incidents/open'), api('/api/admin/sos?days=1'), api('/api/admin/users?filter=requests'),
+        api('/api/admin/cars/stolen').catch(function () { return []; })]).then(function (r) {
+        var c = r[0], sos = r[1], reqs = r[2], stolenCars = r[3];
         // A shared live location isn't an emergency.
         var activeSos = sos.filter(function (x) { return x.status === 'ACTIVE' && x.kind !== 'SHARE'; }).length;
         var waiting = Object.keys(TEAMS).reduce(function (n, t) { return n + (c[t] || 0); }, 0);
@@ -510,17 +516,18 @@
           tile(c.ESCALATED || 0, 'Escalated', true),
           tile(c.COMPLAINTS_OPEN || 0, 'Complaints open'),
           tile(c.COMPLAINTS_OVERDUE || 0, 'Complaints overdue', true),
-          tile(reqs.length, 'Responder requests', true)
+          tile(reqs.length, 'Responder requests', true),
+          tile(stolenCars.length, 'Stolen vehicles', true)
         ].concat(Object.keys(TEAMS).map(function (t) { return tile(c[t] || 0, 'Waiting · ' + TEAMS[t], true); })).concat(parts).join('');
         setCount('nEmerg', activeSos + waiting);
         setCount('nComplaints', c.COMPLAINTS_OVERDUE || 0);
         setCount('nRequests', reqs.length);
-        drawMap(sos);
+        drawMap(sos, stolenCars);
       }).catch(function () {});
     }).catch(function () {});
   }
 
-  function drawMap(sos) {
+  function drawMap(sos, stolenCars) {
     api('/api/admin/all-incidents?status=ACTIVE&days=30').then(function (list) {
       var attention = list.filter(function (i) { return i.status === 'OPEN' && (i.urgency === 'HIGH' || i.escalationLevel > 0 || i.overdue); }).slice(0, 12);
       $('attentionList').innerHTML = attention.length ? attention.map(incidentRow).join('') : '<div class="empty">Nothing waiting too long. </div>';
@@ -538,6 +545,13 @@
         var m = L.circleMarker([x.latitude, x.longitude], { radius: 12, color: checkin ? '#F5B942' : '#FF3B30', weight: 3, fillOpacity: .8 });
         m.bindPopup('<b>' + esc(SOS_KINDS[x.kind] || 'SOS') + '</b><br>' + esc(x.userName) + '<br><a target="_blank" rel="noopener" href="' + esc(x.trackUrl) + '">Live location</a>');
         m.addTo(layer); pts.push([x.latitude, x.longitude]);
+      });
+      (stolenCars || []).filter(function (c) { return c.latitude != null; }).forEach(function (c) {
+        var icon = L.divIcon({ className: '', iconSize: [26, 26], html: '<div style="font-size:22px;line-height:26px;text-align:center;filter:drop-shadow(0 0 3px #FF3B30)">🚗</div>' });
+        L.marker([c.latitude, c.longitude], { icon: icon, title: c.describe })
+          .bindPopup('<b>Stolen: ' + esc(c.describe) + '</b><br>' + esc(c.owner) + (c.online ? '<br>Tracker live' : '<br>Last seen ' + when(c.lastSeenAt)) + '<br><a target="_blank" rel="noopener" href="' + esc(c.trackUrl) + '">Police live page</a>')
+          .addTo(layer);
+        pts.push([c.latitude, c.longitude]);
       });
       if (pts.length) map.fitBounds(pts, { padding: [30, 30], maxZoom: 15 });
       drawUnits();
@@ -704,8 +718,28 @@
     });
   }
 
+  // Car guard: cars reported stolen right now.
+  function carRow(c) {
+    var req = c.request;
+    var police = req ? (req.unit ? esc(req.unit) + ' - ' + esc(STATUS[req.status] || req.status) : esc(STATUS[req.status] || req.status)) : 'no request';
+    return '<div class="card-row urgent"><div class="main">' +
+      '<div class="title"><span class="dot high"></span>' + esc(c.describe) + ' — ' + esc(c.owner) +
+      '<span class="tag ' + (c.online ? 'bad' : 'warn') + '">' + (c.online ? 'tracker live' + (c.speedKmh ? ' · ' + c.speedKmh + ' km/h' : '') : c.latitude != null ? 'last seen ' + when(c.lastSeenAt) : 'no position') + '</span></div>' +
+      '<div class="meta">Stolen ' + when(c.stolenAt) + ' · ' + esc(c.ownerPhone || 'no phone saved') + ' · police: ' + police + ' · seen ' + c.sightings + ' time' + (c.sightings === 1 ? '' : 's') +
+      (c.latitude != null ? ' · <a target="_blank" rel="noopener" href="' + mapLink(c.latitude, c.longitude) + '">map</a>' : '') +
+      ' · <a target="_blank" rel="noopener" href="' + esc(c.trackUrl) + '">police live page</a></div></div></div>';
+  }
+  function loadStolenCars() {
+    return api('/api/admin/cars/stolen').then(function (list) {
+      $('carCount').textContent = list.length;
+      $('carList').innerHTML = list.length ? list.map(carRow).join('') : '<div class="empty">No vehicles reported stolen.</div>';
+      return list;
+    }).catch(function (e) { $('carList').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; return []; });
+  }
+
   function loadEmergencies() {
-    if (!isAdmin()) { $('sosList').innerHTML = $('helpList').innerHTML = '<div class="empty">Admins only.</div>'; return; }
+    if (!isAdmin()) { $('sosList').innerHTML = $('helpList').innerHTML = $('carList').innerHTML = '<div class="empty">Admins only.</div>'; return; }
+    loadStolenCars();
     api('/api/admin/sos?days=' + $('sosDays').value).then(function (list) {
       $('sosCount').textContent = list.filter(function (x) { return x.status === 'ACTIVE' && x.kind !== 'SHARE'; }).length + ' active';
       $('sosList').innerHTML = list.length ? list.map(sosRow).join('') : '<div class="empty">No crash or SOS alerts.</div>';

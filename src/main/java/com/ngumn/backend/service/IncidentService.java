@@ -146,6 +146,15 @@ public class IncidentService {
     /** source: APP, CRASH, SOS or ADMIN; sosEventId when a crash / SOS made it. */
     @Transactional
     public List<IncidentResponse> create(User user, IncidentRequest r, String source, Long sosEventId) {
+        return create(user, r, source, sosEventId, true);
+    }
+
+    /**
+     * joinOpen: the same person asking for the same thing again while it's
+     * still open gets that request back (a double tap, a retry) - but a
+     * showroom reporting two of its cars stolen means two cases (Car guard).
+     */
+    public List<IncidentResponse> create(User user, IncidentRequest r, String source, Long sosEventId, boolean joinOpen) {
         if (r.getLatitude() < -90 || r.getLatitude() > 90 || r.getLongitude() < -180 || r.getLongitude() > 180) {
             throw ApiException.badRequest("That location doesn't look right.");
         }
@@ -154,7 +163,7 @@ public class IncidentService {
         int injured = r.getInjured() != null ? r.getInjured() : 0;
         String description = r.getDescription() != null && !r.getDescription().isBlank() ? r.getDescription().trim() : null;
 
-        List<Incident> open = incidentRepository
+        List<Incident> open = !joinOpen ? List.of() : incidentRepository
                 .findByReporterIdAndCreatedAtAfterOrderByCreatedAtDesc(user.getId(), now().minus(QUEUE_WINDOW)).stream()
                 .filter(i -> i.getType() == r.getType() && i.getStatus().active())
                 .toList();
@@ -752,6 +761,7 @@ public class IncidentService {
             case UNSAFE -> " Stay somewhere busy and well lit.";
             case LIVE_WIRE -> " Keep everyone well away from the wire.";
             case FIRE -> " Move everyone well away and upwind. Don't go back for belongings.";
+            case VEHICLE_THEFT -> " Don't go after it yourself - the police have its details and live position.";
             default -> "";
         };
     }
@@ -890,6 +900,35 @@ public class IncidentService {
         }
         changed(incident);
         return view(responder, incident, null);
+    }
+
+    /** Car guard: a stolen car moved or was seen - the request follows it, so responders' distances are right. */
+    public void moveTo(Long incidentId, double lat, double lng) {
+        incidentRepository.findById(incidentId).filter(i -> i.getStatus().active()).ifPresent(i -> {
+            i.setLatitude(lat);
+            i.setLongitude(lng);
+            incidentRepository.save(i);
+            changed(i);
+        });
+    }
+
+    /** Car guard: tells the unit handling a request (if one has accepted it). True if someone was told. */
+    public boolean tellAssignee(Long incidentId, String text) {
+        Incident i = incidentRepository.findById(incidentId).orElse(null);
+        if (i == null || i.getAssignee() == null || !i.getStatus().active()) return false;
+        note(i.getAssignee(), i, ON_THE_WAY, text);
+        return true;
+    }
+
+    /** Car guard: who's on it - "Waiting", "Traffic Police - Benz Circle is on it"... */
+    public Map<String, Object> statusOf(Long incidentId) {
+        Incident i = incidentRepository.findById(incidentId).orElse(null);
+        if (i == null) return null;
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", i.getId());
+        m.put("status", i.getStatus().name());
+        m.put("unit", i.getAssignee() != null ? unitOf(i.getAssignee()) : null);
+        return m;
     }
 
     private void note(User to, Incident incident, String headline, String text) {

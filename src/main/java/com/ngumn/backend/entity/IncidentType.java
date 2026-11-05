@@ -32,6 +32,8 @@ public enum IncidentType {
     CATTLE("Cattle on the road", "cattle report", ResponderTeam.MUNICIPAL, 20, true),
     LIVE_WIRE("Live electric wire on the road", "live-wire report", ResponderTeam.ELECTRICITY, 65, false),
     STREETLIGHT_OUT("Streetlight not working", "streetlight report", ResponderTeam.ELECTRICITY, 10, false),
+    /** Reported from Car guard (CarGuardService) - the police get the car, its last place and a live link. */
+    VEHICLE_THEFT("Vehicle stolen", "stolen-vehicle report", ResponderTeam.POLICE, 65, false),
 
     // ---- complaints (to be fixed by a deadline) ----
     POTHOLE("Pothole or damaged road", "pothole complaint", ResponderTeam.MUNICIPAL, 20, true, 72),

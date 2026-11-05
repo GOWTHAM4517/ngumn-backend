@@ -21,13 +21,18 @@ public class AlertController {
         this.authService = authService;
     }
 
-    /** Latest alerts - with lat / lng, only those raised within radiusMeters of that point. */
+    /**
+     * Latest alerts of everyone - with lat / lng, only those raised within
+     * radiusMeters of that point. Admins only: every alert is addressed to one
+     * person (an SOS to a contact carries a live-location link), so nobody
+     * else may read them. People read their own with /mine.
+     */
     @GetMapping
     public ResponseEntity<List<AlertResponse>> recent(@RequestHeader("Authorization") String authorization,
                                                       @RequestParam(required = false) Double lat,
                                                       @RequestParam(required = false) Double lng,
                                                       @RequestParam(required = false) Double radiusMeters) {
-        authService.requireUser(authorization);
+        com.ngumn.backend.service.AdminControlService.requireAdmin(authService.requireUser(authorization));
         return ResponseEntity.ok(alertService.recent(lat, lng, radiusMeters));
     }
 

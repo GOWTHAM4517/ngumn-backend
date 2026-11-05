@@ -15,6 +15,9 @@ public interface ViolationComplaintRepository extends JpaRepository<ViolationCom
     List<ViolationComplaint> findTop100ByOrderByCreatedAtDesc();
     List<ViolationComplaint> findByReporterIdOrderByCreatedAtDesc(Long reporterId);
     List<ViolationComplaint> findByStatusAndCreatedAtAfter(ReportStatus status, LocalDateTime after);
+
+    /** New rule-breaker reports - Car guard checks their number plates against stolen cars. */
+    List<ViolationComplaint> findByCreatedAtAfterOrderByCreatedAtAsc(LocalDateTime after);
     long countByReporterIdAndStatus(Long reporterId, ReportStatus status);
     long countByReporterIdAndCreatedAtAfter(Long reporterId, LocalDateTime after);
     long countByStatus(ReportStatus status);

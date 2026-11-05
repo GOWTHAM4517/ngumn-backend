@@ -25,6 +25,8 @@ public class AlertResponse {
     private Long complaintId;
     /** The help request it's about, if any (the app opens it). */
     private Long incidentId;
+    /** The car it's about (Car guard), if any. */
+    private Long carId;
 
     public static AlertResponse from(Alert a) {
         return new AlertResponse(
@@ -32,7 +34,7 @@ public class AlertResponse {
                 a.getVehicle() != null ? a.getVehicle().getId() : null,
                 a.getType(), a.getRiskLevel(), a.getMessage(),
                 a.getLatitude(), a.getLongitude(), a.getAcknowledged(), a.getCreatedAt(),
-                a.getReportId(), a.getComplaintId(), a.getIncidentId()
+                a.getReportId(), a.getComplaintId(), a.getIncidentId(), a.getCarId()
         );
     }
 }

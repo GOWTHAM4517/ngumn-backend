@@ -21,5 +21,7 @@ public class WebUiConfig implements WebMvcConfigurer {
         registry.addViewController("/admin/").setViewName("forward:/admin/index.html");
         // Live-location link sent to emergency contacts by SMS.
         registry.addViewController("/track").setViewName("forward:/track.html");
+        // Car guard: the police's live page for a stolen car.
+        registry.addViewController("/car").setViewName("forward:/car.html");
     }
 }

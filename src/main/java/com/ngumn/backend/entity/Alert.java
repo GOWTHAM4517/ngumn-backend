@@ -55,6 +55,10 @@ public class Alert {
     @Column(name = "incident_id")
     private Long incidentId;
 
+    /** The car it's about (Car guard), if any - the owner opens the car, others the "Seen it?" screen. */
+    @Column(name = "car_id")
+    private Long carId;
+
     @Column(nullable = false)
     @Builder.Default
     private Boolean acknowledged = false;

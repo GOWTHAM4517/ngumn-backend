@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex" />
+<title>Raksio Stolen Car</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<style>
+  :root { --bg: #F4F6FA; --card: #FFFFFF; --text: #0F1B2D; --muted: #5B6B80; --red: #C81E1E; --green: #148A47; --border: #E1E6EE; --amber: #B45309; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #07111F; --card: #0D1C2E; --text: #FFFFFF; --muted: #93A3B8; --border: #172D46; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 16px; }
+  .banner { background: var(--red); color: #fff; border-radius: 16px; padding: 16px 18px; }
+  .banner.ok { background: var(--green); }
+  .banner.closed { background: #46586D; }
+  .banner h1 { font-size: 20px; margin: 0 0 4px; }
+  .banner p { margin: 0; font-size: 14px; opacity: .92; line-height: 1.45; }
+  .plate { display: inline-block; background: #fff; color: #111827; border: 2px solid #111827; border-radius: 6px; padding: 3px 12px; font-weight: 800; letter-spacing: 1px; font-size: 20px; margin-top: 10px; }
+  #map { height: 52vh; min-height: 280px; border-radius: 16px; margin: 14px 0; border: 1px solid var(--border); }
+  .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  a.btn { display: block; text-align: center; padding: 14px; border-radius: 12px; font-weight: 700; text-decoration: none; font-size: 15px; }
+  a.call { background: var(--red); color: #fff; }
+  a.maps { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; margin-top: 12px; }
+  .card h2 { font-size: 13px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .row { display: flex; justify-content: space-between; font-size: 14px; padding: 6px 0; border-top: 1px solid var(--border); gap: 10px; }
+  .row:first-of-type { border-top: none; }
+  .row span:last-child { text-align: right; color: var(--muted); }
+  .live { display: inline-block; width: 8px; height: 8px; border-radius: 4px; background: #22C55E; margin-right: 6px; vertical-align: middle; }
+  .muted { color: var(--muted); font-size: 12px; margin-top: 10px; line-height: 1.5; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="banner" id="banner"><h1 id="headline">Loading…</h1><p id="sub"></p><div id="plate"></div></div>
+  <div id="map"></div>
+  <div class="buttons" id="buttons"></div>
+  <div class="card"><h2>The car</h2><div id="details"><div class="row"><span>Loading…</span></div></div></div>
+  <div class="card" id="seenCard" style="display:none"><h2>Seen by people</h2><div id="seen"></div></div>
+  <p class="muted">Raksio Car guard - the page for the police while a car is reported stolen. The red line is where the car's GPS tracker has been; eyes mark where people saw it. It updates by itself every 15 seconds and shows nothing once the car is found. Don't approach the car alone - call <a href="tel:112">112</a>.</p>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(function () {
+  var token = new URLSearchParams(location.search).get('t') || '';
+  var STATUS = { OPEN: 'Waiting for a unit', ACCEPTED: 'A unit is on it', AT_SCENE: 'Unit at the spot', RESOLVED: 'Closed', FALSE_REPORT: 'Closed', CANCELLED: 'Closed' };
+  var map = null, layer = null, framed = false;
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+  function ago(v) {
+    var t = v ? new Date(v) : null;
+    if (!t || isNaN(t)) return '';
+    var m = Math.round((Date.now() - t.getTime()) / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return m + ' min ago';
+    if (m < 48 * 60) return Math.round(m / 60) + ' h ago';
+    return t.toLocaleDateString();
+  }
+  function row(a, b) { return '<div class="row"><span>' + esc(a) + '</span><span>' + b + '</span></div>'; }
+
+  function load() {
+    fetch('/api/car-track/' + encodeURIComponent(token)).then(function (r) {
+      if (!r.ok) throw new Error(r.status === 404 ? 'This car is not reported stolen, or the link is wrong.' : 'Could not load - trying again.');
+      return r.json();
+    }).then(show).catch(function (e) {
+      document.getElementById('headline').textContent = 'Nothing to show';
+      document.getElementById('sub').textContent = e.message;
+      document.getElementById('banner').className = 'banner closed';
+    });
+  }
+
+  function show(d) {
+    var banner = document.getElementById('banner');
+    if (d.found) {
+      banner.className = 'banner ok';
+      document.getElementById('headline').textContent = 'Car found';
+      document.getElementById('sub').textContent = d.describe + ' is back with its owner. Thank you.';
+      document.getElementById('plate').innerHTML = '';
+      document.getElementById('map').style.display = 'none';
+      document.getElementById('buttons').innerHTML = '';
+      document.getElementById('details').innerHTML = row('Found', ago(d.recoveredAt));
+      document.getElementById('seenCard').style.display = 'none';
+      return;
+    }
+    document.getElementById('headline').textContent = 'Stolen: ' + (d.plate ? [d.colour, d.model].filter(Boolean).join(' ') || d.describe : d.describe);
+    var where = d.last
+      ? (d.online ? '<span class="live"></span>Live - ' : 'Last tracker position ') + esc(ago(d.last.at)) + (d.last.speedKmh ? ', ' + d.last.speedKmh + ' km/h' : '')
+      : 'No tracker - last seen where marked.';
+    document.getElementById('sub').innerHTML = 'Reported ' + esc(ago(d.stolenAt)) + '. ' + where;
+    document.getElementById('plate').innerHTML = d.plate ? '<span class="plate">' + esc(d.plate) + '</span>' : '';
+
+    var pts = (d.trail || []).map(function (p) { return [p.latitude, p.longitude]; });
+    var last = d.last ? [d.last.latitude, d.last.longitude] : pts.length ? pts[pts.length - 1] : null;
+    var seen = d.sightings || [];
+    if (!last && seen.length) last = [seen[0].latitude, seen[0].longitude];
+
+    var b = [];
+    if (last) b.push('<a class="btn maps" href="https://www.google.com/maps/dir/?api=1&destination=' + last[0] + ',' + last[1] + '" target="_blank" rel="noopener">Directions</a>');
+    if (d.ownerPhone) b.push('<a class="btn call" href="tel:' + esc(d.ownerPhone) + '">Call the owner</a>');
+    else b.push('<a class="btn call" href="tel:112">Call 112</a>');
+    document.getElementById('buttons').innerHTML = b.join('');
+
+    var req = d.request;
+    document.getElementById('details').innerHTML =
+      row('Car', esc([d.colour, d.model].filter(Boolean).join(' ') || d.describe)) +
+      (d.plate ? row('Number plate', esc(d.plate)) : '') +
+      row('Owner', esc(d.owner) + (d.ownerPhone ? ' · <a href="tel:' + esc(d.ownerPhone) + '">' + esc(d.ownerPhone) + '</a>' : '')) +
+      row('Reported stolen', esc(ago(d.stolenAt))) +
+      row('GPS tracker', d.tracked ? (d.online ? '<span class="live"></span>Sending now' : 'Quiet since ' + esc(ago(d.last && d.last.at))) : 'None in this car') +
+      (req ? row('Police', esc(req.unit ? req.unit + ' - ' + (STATUS[req.status] || req.status) : (STATUS[req.status] || req.status))) : '');
+
+    var seenEl = document.getElementById('seen');
+    document.getElementById('seenCard').style.display = seen.length ? 'block' : 'none';
+    seenEl.innerHTML = seen.map(function (s) {
+      return row(s.source === 'REPORT' ? 'Plate in a rule-breaker report' : 'Seen by a Raksio user' + (s.note ? ': "' + s.note + '"' : ''), esc(ago(s.at)));
+    }).join('');
+
+    if (!window.L || (!last && !pts.length)) return;
+    if (!map) {
+      map = L.map('map', { zoomControl: true });
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+    }
+    if (layer) layer.remove();
+    layer = L.layerGroup().addTo(map);
+    if (pts.length > 1) L.polyline(pts, { color: '#C81E1E', weight: 4, opacity: 0.8 }).addTo(layer);
+    seen.forEach(function (s) {
+      L.marker([s.latitude, s.longitude], { icon: L.divIcon({ className: '', html: '<div style="font-size:22px">👀</div>', iconSize: [24, 24] }) })
+        .bindPopup((s.source === 'REPORT' ? 'Plate reported' : 'Seen') + ' ' + esc(ago(s.at)) + (s.note ? '<br>' + esc(s.note) : '')).addTo(layer);
+    });
+    if (last) {
+      L.circleMarker(last, { radius: 11, color: '#fff', weight: 3, fillColor: '#C81E1E', fillOpacity: 1 }).bindPopup(esc(d.describe)).addTo(layer);
+    }
+    if (!framed) {
+      var all = pts.concat(seen.map(function (s) { return [s.latitude, s.longitude]; }));
+      if (last) all.push(last);
+      if (all.length > 1) map.fitBounds(all, { padding: [30, 30], maxZoom: 16 });
+      else map.setView(last, 15);
+      framed = true;
+    } else if (last && !map.getBounds().contains(last)) {
+      map.panTo(last);
+    }
+  }
+
+  load();
+  setInterval(load, 15000);
+})();
+</script>
+</body>
+</html>
