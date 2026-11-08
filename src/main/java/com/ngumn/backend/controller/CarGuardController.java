@@ -23,7 +23,7 @@ import java.util.Map;
  * GET    /api/cars                      my cars + fleet counts
  * POST   /api/cars                      add a car
  * GET    /api/cars/{id}                 one car
- * PATCH  /api/cars/{id}                 change name / plate / guard / home / speed limit / tracker id
+ * PATCH  /api/cars/{id}                 change name / plate / home / speed alerts / tracker id
  * DELETE /api/cars/{id}
  * GET    /api/cars/{id}/trail?hours=24  positions + trips
  * POST   /api/cars/{id}/stolen          report stolen (body: where it was, optional)

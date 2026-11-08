@@ -24,17 +24,6 @@ public class CarRequest {
     @Size(max = 30)
     private String colour;
 
-    private Boolean guardOn;
-    private Boolean nightGuard;
-
-    @Min(0)
-    @Max(23)
-    private Integer nightFrom;
-
-    @Min(0)
-    @Max(23)
-    private Integer nightTo;
-
     private Boolean speedAlerts;
 
     @Min(20)

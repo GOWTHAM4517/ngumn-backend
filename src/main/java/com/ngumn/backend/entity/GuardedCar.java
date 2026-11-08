@@ -10,7 +10,7 @@ import java.time.LocalDateTime;
 
 /**
  * A car watched by Car guard (CarGuardService) - someone's own car, or one
- * of a showroom's used cars. A small GPS tracker in the car (not a phone)
+ * of a showroom's used cars (put up for sale in Buy & Sell, MarketService). A small GPS tracker in the car (not a phone)
  * sends its position to /api/tracker with this car's secret trackerId; with
  * no tracker the car can still be reported stolen, which tells the police
  * and Raksio users near where it was last seen.
@@ -67,21 +67,10 @@ public class GuardedCar {
     private Double homeLongitude;
     private Integer homeRadiusM;
 
-    /** Any movement is an alert (parked and locked). */
-    @Builder.Default
-    private Boolean guardOn = false;
+    // (guard_on, night_guard, night_from, night_to: the old parked-car guard, taken out -
+    // the columns stay in the database, unused.)
 
-    /** Movement at night (nightFrom-nightTo) is an alert even with the guard off. */
-    @Builder.Default
-    private Boolean nightGuard = true;
-
-    @Builder.Default
-    private Integer nightFrom = 22;
-
-    @Builder.Default
-    private Integer nightTo = 6;
-
-    /** Tell the owner when it goes over speedLimitKmh (a learner, a driver, a test drive). */
+    /** Tell the owner when it goes over speedLimitKmh (a learner, a driver). */
     @Builder.Default
     private Boolean speedAlerts = false;
 
@@ -115,7 +104,6 @@ public class GuardedCar {
     private Double parkedLongitude;
 
     // So the same thing isn't said over and over
-    private LocalDateTime lastMoveAlertAt;
     private LocalDateTime lastSpeedAlertAt;
     private LocalDateTime lastBroadcastAt;
     @Builder.Default

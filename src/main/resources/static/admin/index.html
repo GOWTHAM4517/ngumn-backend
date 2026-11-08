@@ -297,6 +297,9 @@
       <section><h2>Hazard reports awaiting community votes <span class="badge" id="pendingCount">0</span></h2>
         <div class="sub" style="margin:-4px 0 10px">People nearby confirm or reject reports in the app. Admin buttons are an override.</div>
         <div id="reportsList"><div class="empty">Loading…</div></div></section>
+      <section><h2>Buy &amp; Sell - reported vehicles for sale <span class="badge" id="marketCount">0</span></h2>
+        <div class="sub" style="margin:-4px 0 10px">People report listings as fake, a scam, stolen... Three reports hide a listing until you restore it or take it off. Stolen number plates can't be listed at all.</div>
+        <div id="marketList"><div class="empty">Loading…</div></div></section>
       <section><h2>Rule-breaker reports <span class="badge" id="complaintCount">0</span></h2><div id="complaintsList"><div class="empty">Loading…</div></div></section>
       <section><h2>Traffic violations <span class="badge" id="violationCount">0</span></h2><div id="violationsList"><div class="empty">Loading…</div></div></section>
       <section><h2>Active Green Corridors (simulated) <span class="badge" id="emergencyCount">0</span></h2><div id="emergencyList"><div class="empty">Loading…</div></div></section>
@@ -486,7 +489,7 @@
     if (tab === 'emergencies') loadEmergencies();
     if (tab === 'complaints') loadComplaintBoard();
     if (tab === 'people') { loadRequests(); loadUsers(); }
-    if (tab === 'community') { loadReports(); loadRuleBreakers(); loadViolations(); loadCorridors(); loadAlerts(); }
+    if (tab === 'community') { loadMarket(); loadReports(); loadRuleBreakers(); loadViolations(); loadCorridors(); loadAlerts(); }
     if (tab === 'setup') loadChannels();
   }
 
@@ -735,6 +738,33 @@
       $('carList').innerHTML = list.length ? list.map(carRow).join('') : '<div class="empty">No vehicles reported stolen.</div>';
       return list;
     }).catch(function (e) { $('carList').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; return []; });
+  }
+
+  // Buy & Sell: vehicles for sale that people reported (MarketService).
+  var REASONS = { FAKE: 'fake', SCAM: 'scam', STOLEN: 'stolen?', WRONG_DETAILS: 'wrong details', ALREADY_SOLD: 'already sold', OTHER: 'other' };
+  function marketRow(l) {
+    var hidden = l.status === 'HIDDEN';
+    var reasons = (l.reports || []).map(function (r) { return esc(REASONS[r.reason] || r.reason) + (r.note ? ' ("' + esc(r.note) + '")' : '') + ' - ' + esc(r.by); }).join('; ');
+    return '<div class="card-row' + (hidden ? ' urgent' : '') + '"><div class="main">' +
+      '<div class="title"><span class="dot ' + (hidden ? 'high' : 'medium') + '"></span>' + esc(l.title) + ' — ₹' + Number(l.price).toLocaleString('en-IN') +
+      '<span class="tag ' + (hidden ? 'bad' : 'warn') + '">' + (hidden ? 'hidden' : l.reportCount + ' report' + (l.reportCount === 1 ? '' : 's')) + '</span></div>' +
+      '<div class="meta">' + esc(l.businessName || l.sellerName) + ' · ' + esc(l.sellerPhone || 'no phone') + (l.plate ? ' · ' + esc(l.plate) : '') + (l.area ? ' · ' + esc(l.area) : '') + '</div>' +
+      '<div class="meta">' + reasons + '</div></div>' +
+      '<div class="actions"><button class="good" data-market="' + l.id + '" data-action="RESTORE">Restore</button><button class="danger" data-market="' + l.id + '" data-action="REMOVE">Take off</button></div></div>';
+  }
+  function loadMarket() {
+    if (!isAdmin()) { $('marketList').innerHTML = '<div class="empty">Admins only.</div>'; return; }
+    api('/api/admin/market/reported').then(function (list) {
+      $('marketCount').textContent = list.length;
+      $('marketList').innerHTML = list.length ? list.map(marketRow).join('') : '<div class="empty">No vehicles for sale have been reported.</div>';
+      $('marketList').querySelectorAll('[data-market]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          var a = b.getAttribute('data-action');
+          if (!confirm(a === 'REMOVE' ? 'Take this listing off sale? The seller is told.' : 'Put it back on sale?')) return;
+          api('/api/admin/market/listings/' + b.getAttribute('data-market'), { method: 'POST', body: { action: a } }).then(loadMarket).catch(function (e) { alert(e.message); });
+        });
+      });
+    }).catch(function (e) { $('marketList').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
   }
 
   function loadEmergencies() {

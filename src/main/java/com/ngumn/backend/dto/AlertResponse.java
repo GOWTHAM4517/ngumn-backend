@@ -27,6 +27,9 @@ public class AlertResponse {
     private Long incidentId;
     /** The car it's about (Car guard), if any. */
     private Long carId;
+    /** Buy & Sell: the vehicle for sale / the test drive it's about, if any. */
+    private Long listingId;
+    private Long bookingId;
 
     public static AlertResponse from(Alert a) {
         return new AlertResponse(
@@ -34,7 +37,8 @@ public class AlertResponse {
                 a.getVehicle() != null ? a.getVehicle().getId() : null,
                 a.getType(), a.getRiskLevel(), a.getMessage(),
                 a.getLatitude(), a.getLongitude(), a.getAcknowledged(), a.getCreatedAt(),
-                a.getReportId(), a.getComplaintId(), a.getIncidentId(), a.getCarId()
+                a.getReportId(), a.getComplaintId(), a.getIncidentId(), a.getCarId(),
+                a.getListingId(), a.getBookingId()
         );
     }
 }

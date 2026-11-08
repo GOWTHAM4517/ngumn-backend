@@ -22,8 +22,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.security.SecureRandom;
 import java.time.Duration;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -38,17 +36,20 @@ import java.util.concurrent.ConcurrentHashMap;
  *     Plate watch   -> a rule-breaker report naming its number plate counts as a sighting
  *
  *   With a small GPS tracker (not a phone) sending to /api/tracker
- *     Guard on / at night (22:00-06:00): moving or engine started -> owner alerted
- *       (not when the owner's own Raksio phone is travelling with it)
+ *     Live position, trail and trips for 30 days
  *     Speed alerts over the owner's limit (a driver, a learner)
+ *       (not when the owner's own Raksio phone is travelling with it)
  *     Tracker went quiet while moving / stolen / on a test drive -> owner alerted
  *     Tracker alarms (power cut, tampering, SOS button) -> owner alerted
  *     Stolen: the police request follows the car; live page /car.html?t=...
- *     Test drives (showrooms): customer, time allowed, area allowed;
- *       over the limit, left the area, late back -> staff alerted;
- *       back at the showroom and parked -> ended by itself with a report
- *     Trail and trips for 30 days; handing a sold car over to the buyer's account
+ *     Test drives (Buy & Sell, MarketService): the tracker follows the drive -
+ *       time allowed, area, speed limit; it ends by itself back and parked
+ *     Handing a sold car over to the buyer's account
  * </pre>
+ *
+ * (There used to be a parked-car guard here - an alert when the car moved at
+ * night or with the guard on. It was taken out: test drives and selling are
+ * what showrooms and owners asked for.)
  *
  * Messages start with a fixed headline (HEADLINES) - the app uses it as the
  * notification title (src/lib/alert-text.ts).
@@ -66,18 +67,13 @@ public class CarGuardService {
     static final int MAX_CARS = 50;
     /** Faster than this is "moving" (GPS speed of a parked car wanders 0-5 km/h). */
     static final double MOVING_KMH = 10;
-    /** Further than this from where it was parked is "moved" (GPS drift stays well inside). */
-    static final double MOVED_M = 200;
     /** Within this of the same spot is "standing still"; after PARK_AFTER that spot is where it's parked. */
     static final double STILL_M = 50;
     static final Duration PARK_AFTER = Duration.ofMinutes(2);
-    static final Duration MOVE_ALERT_GAP = Duration.ofMinutes(10);
     static final Duration SPEED_ALERT_GAP = Duration.ofMinutes(5);
     static final Duration ALARM_GAP = Duration.ofMinutes(10);
     /** Quiet this long while moving / stolen / on a test drive: tell the owner. */
     static final Duration SILENT_MOVING = Duration.ofMinutes(10);
-    /** Quiet this long while parked with the guard on (trackers report less often when parked). */
-    static final Duration SILENT_PARKED = Duration.ofMinutes(30);
     static final Duration ONLINE = Duration.ofMinutes(5);
     /** Alerts only for positions this recent (a tracker sends what it saved while it had no signal later). */
     static final Duration FRESH = Duration.ofMinutes(5);
@@ -94,14 +90,12 @@ public class CarGuardService {
     static final int MAX_TRAIL_POINTS = 1500;
 
     private static final Logger log = LoggerFactory.getLogger(CarGuardService.class);
-    private static final ZoneId IST = ZoneId.of("Asia/Kolkata");
-    private static final DateTimeFormatter CLOCK = DateTimeFormatter.ofPattern("h:mm a", Locale.ENGLISH);
     private static final String ALPHABET = "abcdefghjkmnpqrstuvwxyz23456789";
     private static final SecureRandom RANDOM = new SecureRandom();
 
     private final GuardedCarRepository cars;
     private final CarPositionRepository positions;
-    private final TestDriveRepository drives;
+    private final MarketService market;
     private final CarSightingRepository sightings;
     private final ViolationComplaintRepository complaints;
     private final VehicleRepository vehicles;
@@ -121,13 +115,13 @@ public class CarGuardService {
     /** Rule-breaker reports up to here have been checked against stolen cars' plates. */
     private volatile LocalDateTime plateCheckedUpTo = LocalDateTime.now().minusMinutes(2);
 
-    public CarGuardService(GuardedCarRepository cars, CarPositionRepository positions, TestDriveRepository drives,
+    public CarGuardService(GuardedCarRepository cars, CarPositionRepository positions, MarketService market,
                            CarSightingRepository sightings, ViolationComplaintRepository complaints,
                            VehicleRepository vehicles, UserRepository users, AlertService alerts,
                            IncidentService incidents, RewardService rewards, NgumnWebSocketHandler webSocket) {
         this.cars = cars;
         this.positions = positions;
-        this.drives = drives;
+        this.market = market;
         this.sightings = sightings;
         this.complaints = complaints;
         this.vehicles = vehicles;
@@ -214,17 +208,15 @@ public class CarGuardService {
         if (car.stolen()) {
             throw ApiException.badRequest("It's reported stolen - mark it found first, so the police case is closed.");
         }
-        drives.findFirstByCarIdAndStatus(car.getId(), "ACTIVE").ifPresent(d -> finish(d, now()));
+        market.carLeaving(car.getId());
         positions.deleteByCarId(car.getId());
         cars.delete(car);
         changed(car);
     }
 
-    /** Plate, model, colour, guard settings, home - whatever was sent. */
+    /** Plate, model, colour, speed alerts, home - whatever was sent. */
     private void apply(GuardedCar car, CarRequest r, User owner) {
         // The controller validates too (@Valid); this keeps the service safe on its own.
-        range(r.getNightFrom(), 0, 23, "Night starts at an hour from 0 to 23.");
-        range(r.getNightTo(), 0, 23, "Night ends at an hour from 0 to 23.");
         range(r.getSpeedLimitKmh(), 20, 200, "The speed limit is 20-200 km/h.");
         range(r.getHomeRadiusM(), 50, 5000, "The home area is 50 m to 5 km across.");
         if (r.getPlate() != null) {
@@ -239,10 +231,6 @@ public class CarGuardService {
         }
         if (r.getModel() != null) car.setModel(text(r.getModel()));
         if (r.getColour() != null) car.setColour(text(r.getColour()));
-        if (r.getGuardOn() != null) car.setGuardOn(r.getGuardOn());
-        if (r.getNightGuard() != null) car.setNightGuard(r.getNightGuard());
-        if (r.getNightFrom() != null) car.setNightFrom(r.getNightFrom());
-        if (r.getNightTo() != null) car.setNightTo(r.getNightTo());
         if (r.getSpeedAlerts() != null) car.setSpeedAlerts(r.getSpeedAlerts());
         if (r.getSpeedLimitKmh() != null) car.setSpeedLimitKmh(r.getSpeedLimitKmh());
         if (Boolean.TRUE.equals(r.getClearHome())) {
@@ -256,7 +244,7 @@ public class CarGuardService {
             car.setHomeLatitude(r.getHomeLatitude());
             car.setHomeLongitude(r.getHomeLongitude());
             car.setHomeRadiusM(r.getHomeRadiusM() != null ? r.getHomeRadiusM() : 150);
-            // Parked there now: the guard measures from it straight away.
+            // Parked there now.
             car.setParkedLatitude(r.getHomeLatitude());
             car.setParkedLongitude(r.getHomeLongitude());
         } else if (r.getHomeRadiusM() != null && car.getHomeLatitude() != null) {
@@ -268,7 +256,7 @@ public class CarGuardService {
 
     /**
      * A position from the car's tracker (or the owner's phone standing in for
-     * one). Keeps the trail and runs the guard, speed, test-drive and stolen
+     * one). Keeps the trail and runs the speed, alarm, test-drive and stolen
      * rules. Unknown tracker ids are refused.
      */
     @Transactional
@@ -323,16 +311,10 @@ public class CarGuardService {
             car.setParkedLatitude(car.getStillLatitude());
             car.setParkedLongitude(car.getStillLongitude());
         }
-        boolean parkedNow = car.getStillSince() != null && !Duration.between(car.getStillSince(), at).minus(PARK_AFTER).isNegative();
+        // A test drive in this car (Buy & Sell): the tracker follows it.
+        boolean onDrive = market.carFix(car.getId(), lat, lon, speed, at, fresh);
 
-        TestDrive drive = drives.findFirstByCarIdAndStatus(car.getId(), "ACTIVE").orElse(null);
-        if (drive != null) testDriveFix(car, drive, lat, lon, speed, moved, gapS, fresh, parkedNow, at);
-
-        boolean ownerAboard = ownerAboard(car, lat, lon, now);
-        if (fresh && !car.stolen() && drive == null && !ownerAboard) {
-            guardFix(car, f, lat, lon, speed, at, now);
-            speedFix(car, lat, lon, speed, now);
-        }
+        if (fresh && !car.stolen() && !onDrive && !ownerAboard(car, lat, lon, now)) speedFix(car, lat, lon, speed, now);
         if (fresh && f.alarm() != null && !f.alarm().isBlank()) alarm(car, f.alarm().trim(), lat, lon, now);
 
         if (car.stolen()) {
@@ -361,25 +343,6 @@ public class CarGuardService {
         return result(car, null);
     }
 
-    /** Guard on, or night: the car moving or its engine starting is an alert. */
-    private void guardFix(GuardedCar car, Fix f, double lat, double lon, Double speed, LocalDateTime at, LocalDateTime now) {
-        boolean night = Boolean.TRUE.equals(car.getNightGuard()) && isNight(car, at);
-        boolean armed = Boolean.TRUE.equals(car.getGuardOn()) || night;
-        if (!armed) return;
-        double fromParked = car.getParkedLatitude() != null
-                ? GeoUtil.distanceMeters(car.getParkedLatitude(), car.getParkedLongitude(), lat, lon) : 0;
-        boolean moving = (speed != null && speed >= MOVING_KMH) || fromParked > MOVED_M;
-        boolean started = Boolean.TRUE.equals(f.ignition()) && Boolean.FALSE.equals(car.getLastIgnition());
-        if (!moving && !started) return;
-        if (!gapPassed(car.getLastMoveAlertAt(), MOVE_ALERT_GAP, now)) return;
-        car.setLastMoveAlertAt(now);
-        String what = moving
-                ? "is moving" + (speed != null && speed >= 1 ? " (" + Math.round(speed) + " km/h)" : "")
-                : "has been started";
-        tellOwner(car, RiskLevel.HIGH, CAR_GUARD + ": your " + car.describe() + " " + what
-                + where(car, lat, lon) + ", " + clock(at) + ". Not you? Open it and tap Report stolen.", lat, lon);
-    }
-
     private void speedFix(GuardedCar car, double lat, double lon, Double speed, LocalDateTime now) {
         if (!Boolean.TRUE.equals(car.getSpeedAlerts()) || speed == null || speed <= limitOf(car)) return;
         if (!gapPassed(car.getLastSpeedAlertAt(), SPEED_ALERT_GAP, now)) return;
@@ -391,13 +354,12 @@ public class CarGuardService {
     /** A tracker's own alarm (Traccar names): power cut, tampering, SOS button... */
     private void alarm(GuardedCar car, String alarm, double lat, double lon, LocalDateTime now) {
         String a = alarm.toLowerCase(Locale.ROOT).replaceAll("[^a-z]", "");
-        boolean armed = Boolean.TRUE.equals(car.getGuardOn()) || (Boolean.TRUE.equals(car.getNightGuard()) && isNight(car, now));
         String text = switch (a) {
             case "powercut", "poweroff" -> "its tracker lost power - someone may have cut its wires";
             case "tampering", "removing", "tamper" -> "someone is tampering with its tracker";
             case "sos" -> "the SOS button in the car was pressed";
-            case "vibration", "shock", "movement" -> armed ? "it was shaken or hit while parked" : null;
-            case "door" -> armed ? "a door was opened" : null;
+            // Shaken while parked, a door: only meant something with the old parked-car guard.
+            case "vibration", "shock", "movement", "door" -> null;
             case "lowbattery", "lowpower" -> "its tracker's battery is low";
             case "accident", "hardbraking", "hardacceleration" -> "it may have braked hard or hit something";
             default -> "its tracker raised an alarm (" + alarm + ")";
@@ -427,150 +389,31 @@ public class CarGuardService {
         return m;
     }
 
-    // ------------------------------------------------------------------ test drives
+    // ------------------------------------------------------------------ test drives (Buy & Sell)
 
+    /** A walk-in customer's test drive of this car (MarketService - on its listing if it's for sale). */
     @Transactional
     public Map<String, Object> startTestDrive(User owner, Long carId, TestDriveRequest r) {
         GuardedCar car = mine(owner, carId);
-        if (car.stolen()) throw ApiException.badRequest("This car is reported stolen.");
-        if (text(r.getCustomerName()) == null) throw ApiException.badRequest("Who's driving? Type the customer's name.");
         range(r.getMinutes(), 10, 240, "A test drive is 10 minutes to 4 hours.");
         range(r.getRadiusM(), 1000, 50000, "The test-drive area is 1-50 km.");
-        drives.findFirstByCarIdAndStatus(car.getId(), "ACTIVE").ifPresent(d -> {
-            throw ApiException.badRequest(car.getName() + " is already out with " + d.getCustomerName() + ". End that test drive first.");
-        });
-        Double cLat = car.getHomeLatitude() != null ? car.getHomeLatitude() : car.getLastLatitude();
-        Double cLon = car.getHomeLatitude() != null ? car.getHomeLongitude() : car.getLastLongitude();
-        if (cLat == null) {
-            throw ApiException.badRequest("Set the car's home (the showroom) first, so Car guard knows where test drives start.");
-        }
-        String phone = r.getCustomerPhone() != null && !r.getCustomerPhone().isBlank()
-                ? ContactService.normalise(r.getCustomerPhone()) : null;
-        LocalDateTime now = now();
-        TestDrive d = drives.save(TestDrive.builder()
-                .carId(car.getId())
-                .startedBy(owner)
-                .customerName(r.getCustomerName().trim())
-                .customerPhone(phone)
-                .startedAt(now)
-                .dueBackAt(now.plusMinutes(r.getMinutes() != null ? r.getMinutes() : 30))
-                .centerLatitude(cLat)
-                .centerLongitude(cLon)
-                .radiusM(r.getRadiusM() != null ? r.getRadiusM() : 5000)
-                .status("ACTIVE")
-                .build());
+        Map<String, Object> d = market.walkInForCar(owner, car, r);
         changed(car);
-        return driveView(car, d);
+        return d;
     }
 
     @Transactional
     public Map<String, Object> endTestDrive(User owner, Long carId) {
         GuardedCar car = mine(owner, carId);
-        TestDrive d = drives.findFirstByCarIdAndStatus(car.getId(), "ACTIVE")
-                .orElseThrow(() -> ApiException.badRequest("No test drive is going on for this car."));
-        finish(d, now());
+        Map<String, Object> d = market.endForCar(owner, car.getId());
         changed(car);
-        return driveView(car, d);
+        return d;
     }
 
     public List<Map<String, Object>> testDrives(User owner, Long carId) {
         GuardedCar car = mine(owner, carId);
         // Only the drives this account ran - a car handed to a buyer doesn't show the showroom's customers.
-        return drives.findTop20ByCarIdOrderByStartedAtDesc(car.getId()).stream()
-                .filter(d -> d.getStartedBy() != null && d.getStartedBy().getId().equals(owner.getId()))
-                .map(d -> driveView(car, d)).toList();
-    }
-
-    private void testDriveFix(GuardedCar car, TestDrive d, double lat, double lon, Double speed, double moved,
-                              long gapS, boolean fresh, boolean parkedNow, LocalDateTime at) {
-        if (car.getLastSeenAt() != null && !car.getLastSeenAt().isBefore(d.getStartedAt()) && gapS <= 600 && moved < 10_000) {
-            d.setDistanceM(d.getDistanceM() + moved);
-        }
-        int limit = limitOf(car);
-        if (speed != null && speed > d.getMaxSpeedKmh()) d.setMaxSpeedKmh(speed);
-        if (speed != null && speed > limit && !Boolean.TRUE.equals(d.getOverLimitNow())) {
-            d.setOverLimitNow(true);
-            d.setOverLimitCount(d.getOverLimitCount() + 1);
-            if (fresh) {
-                tell(d.getStartedBy(), car, RiskLevel.MEDIUM, TEST_DRIVE + ": " + d.getCustomerName() + " is doing "
-                        + Math.round(speed) + " km/h in " + car.getName() + " (limit " + limit + ").", lat, lon);
-            }
-        } else if (speed != null && speed < limit - 5) {
-            d.setOverLimitNow(false); // counted again only after slowing down properly
-        }
-        double fromShowroom = GeoUtil.distanceMeters(d.getCenterLatitude(), d.getCenterLongitude(), lat, lon);
-        if (fromShowroom > d.getRadiusM() && !Boolean.TRUE.equals(d.getLeftArea())) {
-            d.setLeftArea(true);
-            if (fresh) {
-                tell(d.getStartedBy(), car, RiskLevel.HIGH, TEST_DRIVE + ": " + d.getCustomerName() + " has taken "
-                        + car.getName() + " " + km(fromShowroom) + " from the showroom (allowed " + km(d.getRadiusM()) + ").", lat, lon);
-            }
-        }
-        // Back at the showroom and parked after a real drive: ends by itself.
-        boolean back = fromShowroom <= Math.max(150, car.getHomeRadiusM() != null ? car.getHomeRadiusM() : 0);
-        if (back && parkedNow && d.getDistanceM() >= 500) {
-            finish(d, at);
-            tell(d.getStartedBy(), car, RiskLevel.LOW, TEST_DRIVE + ": " + d.getCustomerName() + " is back with "
-                    + car.getName() + ". " + driveSummary(car, d), lat, lon);
-            return;
-        }
-        drives.save(d);
-    }
-
-    private void finish(TestDrive d, LocalDateTime at) {
-        d.setStatus("ENDED");
-        d.setEndedAt(at);
-        d.setReturnedLate(at.isAfter(d.getDueBackAt()));
-        drives.save(d);
-    }
-
-    Map<String, Object> driveView(GuardedCar car, TestDrive d) {
-        Map<String, Object> m = new LinkedHashMap<>();
-        m.put("id", d.getId());
-        m.put("customerName", d.getCustomerName());
-        m.put("customerPhone", d.getCustomerPhone());
-        m.put("startedAt", d.getStartedAt());
-        m.put("dueBackAt", d.getDueBackAt());
-        m.put("endedAt", d.getEndedAt());
-        m.put("status", d.getStatus());
-        m.put("radiusM", d.getRadiusM());
-        m.put("distanceKm", Math.round(d.getDistanceM() / 100.0) / 10.0);
-        m.put("maxSpeedKmh", (int) Math.round(d.getMaxSpeedKmh()));
-        m.put("speedLimitKmh", limitOf(car));
-        m.put("overLimitCount", d.getOverLimitCount());
-        m.put("leftArea", d.getLeftArea());
-        m.put("late", d.active() ? now().isAfter(d.getDueBackAt()) : Boolean.TRUE.equals(d.getReturnedLate()));
-        LocalDateTime end = d.getEndedAt() != null ? d.getEndedAt() : now();
-        m.put("minutes", Math.max(0, Duration.between(d.getStartedAt(), end).toMinutes()));
-        if (d.active()) m.put("minutesLeft", Duration.between(now(), d.getDueBackAt()).toMinutes());
-        m.put("verdict", verdict(car, d));
-        m.put("summary", driveSummary(car, d));
-        return m;
-    }
-
-    /** CAREFUL (nothing to note), CHECK (a little fast, or late), RISKY (often fast, far over, or left the area). */
-    static String verdict(GuardedCar car, TestDrive d) {
-        int limit = car.getSpeedLimitKmh() != null ? car.getSpeedLimitKmh() : 80;
-        boolean late = Boolean.TRUE.equals(d.getReturnedLate()) || Boolean.TRUE.equals(d.getLateAlerted());
-        if (d.getOverLimitCount() >= 3 || d.getMaxSpeedKmh() >= limit + 30 || Boolean.TRUE.equals(d.getLeftArea())) return "RISKY";
-        if (d.getOverLimitCount() > 0 || late) return "CHECK";
-        return "CAREFUL";
-    }
-
-    /** "12.4 km in 26 min, top speed 84 km/h, over 80 km/h once, stayed within 5 km, back on time." */
-    static String driveSummary(GuardedCar car, TestDrive d) {
-        int limit = car.getSpeedLimitKmh() != null ? car.getSpeedLimitKmh() : 80;
-        LocalDateTime end = d.getEndedAt() != null ? d.getEndedAt() : LocalDateTime.now();
-        long minutes = Math.max(0, Duration.between(d.getStartedAt(), end).toMinutes());
-        int over = d.getOverLimitCount();
-        StringBuilder s = new StringBuilder();
-        s.append(Math.round(d.getDistanceM() / 100.0) / 10.0).append(" km in ").append(minutes).append(" min, top speed ")
-                .append(Math.round(d.getMaxSpeedKmh())).append(" km/h, ")
-                .append(over == 0 ? "never over " + limit + " km/h" : "over " + limit + " km/h " + (over == 1 ? "once" : over + " times"))
-                .append(", ").append(Boolean.TRUE.equals(d.getLeftArea()) ? "went beyond " : "stayed within ").append(km(d.getRadiusM()));
-        if (d.getEndedAt() != null) s.append(Boolean.TRUE.equals(d.getReturnedLate()) ? ", back late." : ", back on time.");
-        else s.append(".");
-        return s.toString();
+        return market.drivesForCar(owner, car.getId());
     }
 
     // ------------------------------------------------------------------ stolen
@@ -609,8 +452,8 @@ public class CarGuardService {
         car.setRecoveredAt(null);
         car.setLastBroadcastAt(now);
         car.setSilentAlerted(false);
-        drives.findFirstByCarIdAndStatus(car.getId(), "ACTIVE").ifPresent(d -> finish(d, now));
         cars.save(car);
+        market.carStolen(car);
 
         int nearby = broadcastStolen(car, p[0], p[1]);
         tellOwner(car, RiskLevel.HIGH, CAR_GUARD + ": " + car.getName() + " reported stolen. The police have its details"
@@ -861,7 +704,7 @@ public class CarGuardService {
     public Map<String, Object> transfer(User owner, Long carId, CarTransferRequest r) {
         GuardedCar car = mine(owner, carId);
         if (car.stolen()) throw ApiException.badRequest("It's reported stolen - mark it found first.");
-        if (drives.findFirstByCarIdAndStatus(car.getId(), "ACTIVE").isPresent()) throw ApiException.badRequest("End the test drive first.");
+        if (market.activeDriveForCar(car.getId()) != null) throw ApiException.badRequest("End the test drive first.");
         String to = r.getTo().trim();
         User buyer = to.contains("@")
                 ? users.findByEmail(to.toLowerCase(Locale.ROOT)).or(() -> users.findByEmail(to)).orElse(null)
@@ -873,20 +716,9 @@ public class CarGuardService {
                 .anyMatch(o -> car.getPlateKey().equals(o.getPlateKey()))) {
             throw ApiException.badRequest("The buyer has already added " + car.getPlate() + ".");
         }
+        market.carLeaving(car.getId());
         positions.deleteByCarId(car.getId());
-        car.setOwner(buyer);
-        car.setName(car.getModel() != null ? car.getModel() : "My car");
-        car.setGuardOn(false);
-        car.setNightGuard(true);
-        car.setSpeedAlerts(false);
-        car.setHomeLatitude(null);
-        car.setHomeLongitude(null);
-        car.setHomeRadiusM(null);
-        car.setParkedLatitude(null);
-        car.setParkedLongitude(null);
-        car.setTrackToken(uniqueToken());
-        car.setLastMoveAlertAt(null);
-        car.setLastSpeedAlertAt(null);
+        resetForNewOwner(car, buyer, uniqueToken());
         cars.save(car);
         alerts.raiseAboutCar(buyer, RiskLevel.LOW, CAR_GUARD + ": " + owner.getName() + " has handed your " + car.describe()
                 + " over to you, with its tracker. Open Car guard to set where you park it.", null, null, car.getId(), null);
@@ -897,6 +729,20 @@ public class CarGuardService {
         return m;
     }
 
+    /** A car going to its buyer: no home, no alerts set, a new police-page link. */
+    public static void resetForNewOwner(GuardedCar car, User buyer, String newToken) {
+        car.setOwner(buyer);
+        car.setName(car.getModel() != null ? car.getModel() : "My car");
+        car.setSpeedAlerts(false);
+        car.setHomeLatitude(null);
+        car.setHomeLongitude(null);
+        car.setHomeRadiusM(null);
+        car.setParkedLatitude(null);
+        car.setParkedLongitude(null);
+        car.setTrackToken(newToken);
+        car.setLastSpeedAlertAt(null);
+    }
+
     // ------------------------------------------------------------------ every minute
 
     @Scheduled(fixedDelay = 60_000, initialDelay = 45_000)
@@ -905,11 +751,6 @@ public class CarGuardService {
             checkSilence();
         } catch (RuntimeException e) {
             log.warn("Car guard silence check failed: {}", e.toString());
-        }
-        try {
-            checkTestDrives();
-        } catch (RuntimeException e) {
-            log.warn("Car guard test-drive check failed: {}", e.toString());
         }
         try {
             plateWatch();
@@ -928,12 +769,11 @@ public class CarGuardService {
         int n = 0;
         for (GuardedCar car : cars.findAll()) {
             if (car.getLastSeenAt() == null || Boolean.TRUE.equals(car.getSilentAlerted())) continue;
-            TestDrive drive = drives.findFirstByCarIdAndStatus(car.getId(), "ACTIVE").orElse(null);
+            User driveSeller = market.activeDriveSeller(car.getId());
             boolean wasMoving = (car.getLastSpeedKmh() != null && car.getLastSpeedKmh() >= MOVING_KMH)
                     || Boolean.TRUE.equals(car.getLastIgnition());
-            Duration limit = car.stolen() || drive != null || wasMoving ? SILENT_MOVING
-                    : Boolean.TRUE.equals(car.getGuardOn()) ? SILENT_PARKED : null;
-            if (limit == null) continue;
+            if (!car.stolen() && driveSeller == null && !wasMoving) continue;
+            Duration limit = SILENT_MOVING;
             Duration quiet = Duration.between(car.getLastSeenAt(), now);
             if (quiet.compareTo(limit) < 0) continue;
             car.setSilentAlerted(true);
@@ -944,43 +784,13 @@ public class CarGuardService {
                     : "It may have been switched off or lost signal.";
             String text = CAR_GUARD + ": " + car.getName() + "'s tracker stopped sending " + mins + " min ago"
                     + where(car, car.getLastLatitude(), car.getLastLongitude()) + ". " + why;
-            if (drive != null) tell(drive.getStartedBy(), car, RiskLevel.HIGH, text, car.getLastLatitude(), car.getLastLongitude());
+            if (driveSeller != null) tell(driveSeller, car, RiskLevel.HIGH, text, car.getLastLatitude(), car.getLastLongitude());
             else tellOwner(car, RiskLevel.HIGH, text, car.getLastLatitude(), car.getLastLongitude());
             if (car.stolen() && car.getTheftIncidentId() != null) {
                 incidents.tellAssignee(car.getTheftIncidentId(), STOLEN_CAR + ": the " + car.describe() + "'s tracker went quiet "
                         + mins + " min ago. Its last position is on the request.");
             }
             n++;
-        }
-        return n;
-    }
-
-    /** Customers late back; drives left running for hours are closed. */
-    @Transactional
-    public int checkTestDrives() {
-        LocalDateTime now = now();
-        int n = 0;
-        for (TestDrive d : drives.findByStatus("ACTIVE")) {
-            GuardedCar car = cars.findById(d.getCarId()).orElse(null);
-            if (car == null || now.isAfter(d.getDueBackAt().plusHours(6))) {
-                finish(d, now);
-                continue;
-            }
-            if (now.isAfter(d.getDueBackAt()) && !Boolean.TRUE.equals(d.getLateAlerted())) {
-                d.setLateAlerted(true);
-                drives.save(d);
-                String where = "";
-                if (car.getLastLatitude() != null) {
-                    double km = GeoUtil.distanceMeters(d.getCenterLatitude(), d.getCenterLongitude(), car.getLastLatitude(), car.getLastLongitude());
-                    where = " It's " + km(km) + " from the showroom"
-                            + (car.getLastSpeedKmh() != null && car.getLastSpeedKmh() >= MOVING_KMH ? " and moving." : ".");
-                }
-                tell(d.getStartedBy(), car, RiskLevel.MEDIUM, TEST_DRIVE + ": " + d.getCustomerName() + " should have been back with "
-                        + car.getName() + " at " + clock(d.getDueBackAt()) + "." + where
-                        + (d.getCustomerPhone() != null ? " Call them: " + d.getCustomerPhone() : ""),
-                        car.getLastLatitude(), car.getLastLongitude());
-                n++;
-            }
         }
         return n;
     }
@@ -1033,15 +843,9 @@ public class CarGuardService {
         m.put("colour", c.getColour());
         m.put("describe", c.describe());
         m.put("status", c.getStatus());
-        m.put("guardOn", c.getGuardOn());
-        m.put("nightGuard", c.getNightGuard());
-        m.put("nightFrom", c.getNightFrom());
-        m.put("nightTo", c.getNightTo());
         m.put("speedAlerts", c.getSpeedAlerts());
         m.put("speedLimitKmh", limitOf(c));
-        boolean nightNow = Boolean.TRUE.equals(c.getNightGuard()) && isNight(c, now);
-        m.put("armed", !c.stolen() && (Boolean.TRUE.equals(c.getGuardOn()) || nightNow));
-        m.put("nightNow", nightNow);
+        m.put("listing", market.listingOfCar(c.getId()));
         if (c.getHomeLatitude() != null) {
             m.put("home", Map.of("latitude", c.getHomeLatitude(), "longitude", c.getHomeLongitude(),
                     "radiusM", c.getHomeRadiusM() != null ? c.getHomeRadiusM() : 150));
@@ -1063,8 +867,8 @@ public class CarGuardService {
             m.put("fromHomeM", Math.round(d));
             m.put("atHome", d <= (c.getHomeRadiusM() != null ? c.getHomeRadiusM() : 150));
         }
-        TestDrive drive = drives.findFirstByCarIdAndStatus(c.getId(), "ACTIVE").orElse(null);
-        m.put("testDrive", drive != null ? driveView(c, drive) : null);
+        Map<String, Object> drive = market.activeDriveForCar(c.getId());
+        m.put("testDrive", drive);
         String state;
         if (c.stolen()) state = "STOLEN";
         else if (drive != null) state = "TEST_DRIVE";
@@ -1205,18 +1009,6 @@ public class CarGuardService {
         double d = GeoUtil.distanceMeters(car.getHomeLatitude(), car.getHomeLongitude(), lat, lon);
         if (d <= (car.getHomeRadiusM() != null ? car.getHomeRadiusM() : 150)) return ", at its parking place";
         return ", " + km(d) + " from its parking place";
-    }
-
-    static boolean isNight(GuardedCar car, LocalDateTime at) {
-        int from = car.getNightFrom() != null ? car.getNightFrom() : 22;
-        int to = car.getNightTo() != null ? car.getNightTo() : 6;
-        int h = at.atZone(ZoneId.systemDefault()).withZoneSameInstant(IST).getHour();
-        if (from == to) return false;
-        return from > to ? h >= from || h < to : h >= from && h < to;
-    }
-
-    private static String clock(LocalDateTime at) {
-        return at.atZone(ZoneId.systemDefault()).withZoneSameInstant(IST).format(CLOCK).toLowerCase(Locale.ROOT);
     }
 
     /** "north-east " (with the space) or "" when the tracker doesn't say. */

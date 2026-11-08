@@ -108,6 +108,24 @@ public class AlertService {
         return alert;
     }
 
+    /** Buy & Sell: a note to one person about a vehicle for sale or a test drive - the app opens it. */
+    public Alert raiseAboutMarket(User user, RiskLevel level, String message, Double lat, Double lon, Long listingId, Long bookingId) {
+        Alert alert = Alert.builder()
+                .user(user)
+                .type(AlertType.HIGH_RISK)
+                .riskLevel(level)
+                .message(fit(message))
+                .latitude(lat)
+                .longitude(lon)
+                .listingId(listingId)
+                .bookingId(bookingId)
+                .acknowledged(false)
+                .build();
+        alert = alertRepository.save(alert);
+        webSocketHandler.broadcast("ALERT", java.util.Map.of("id", alert.getId(), "userId", user.getId()));
+        return alert;
+    }
+
     public List<AlertResponse> recent() {
         return recent(null, null, null);
     }

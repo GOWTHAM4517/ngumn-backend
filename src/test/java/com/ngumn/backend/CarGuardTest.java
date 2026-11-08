@@ -19,9 +19,10 @@ import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Car guard: trackers, the guard, speed and alarms, test drives, stolen cars
- * (police, people nearby, sightings, plate watch, found), silence, handing a
- * car to its buyer - the real services against in-memory repositories:
+ * Car guard: trackers, speed and alarms, test drives (through Buy & Sell),
+ * stolen cars (police, people nearby, sightings, plate watch, found),
+ * silence, handing a car to its buyer - the real services against in-memory
+ * repositories:
  *
  *   ./mvnw -Dtest='CarGuardTest' test
  */
@@ -34,6 +35,7 @@ class CarGuardTest {
     VehicleRepository vehicles;
     IncidentService incidents;
     CarGuardService guard;
+    MarketService market;
     User showroom, ravi, farAway, police, admin, buyer;
 
     @BeforeEach
@@ -47,8 +49,11 @@ class CarGuardTest {
         AuthorityForwarder forwarder = new AuthorityForwarder(new StandardEnvironment(), new NotifyGateway());
         incidents = new IncidentService(db.of(IncidentRepository.class), users, alerts, ws, vehicles, corridor, forwarder, e -> { });
         RewardService rewards = new RewardService(db.of(RewardRepository.class), users);
+        market = new MarketService(db.of(MarketListingRepository.class), db.of(ListingPhotoRepository.class),
+                db.of(TestDriveBookingRepository.class), db.of(ListingReportRepository.class), db.of(GuardedCarRepository.class),
+                db.of(CarPositionRepository.class), db.of(CarSightingRepository.class), users, alerts, incidents, ws);
         guard = new CarGuardService(db.of(GuardedCarRepository.class), db.of(CarPositionRepository.class),
-                db.of(TestDriveRepository.class), db.of(CarSightingRepository.class), db.of(ViolationComplaintRepository.class),
+                market, db.of(CarSightingRepository.class), db.of(ViolationComplaintRepository.class),
                 vehicles, users, alerts, incidents, rewards, ws);
 
         showroom = person("Vijay Kumar (U-Trust)", "+919848011111", null, null);
@@ -159,57 +164,21 @@ class CarGuardTest {
     // ------------------------------------------------------------------ guard, speed, alarms
 
     @Test
-    void guardTellsTheOwnerWhenTheCarMovesButNotWhenTheOwnerIsInIt() {
+    void aParkedCarMovingIsNoLongerAnAlarm() {
+        // The night guard / guard on was taken out: moving at any hour is just a trip.
         GuardedCar c = car(addCar(showroom, "AP 16 BX 2231", true));
-        CarRequest on = new CarRequest();
-        on.setGuardOn(true);
-        guard.update(showroom, c.getId(), on, null);
         LocalDateTime t = LocalDateTime.now().minusMinutes(4);
         fix(c, SHOWROOM_LAT, SHOWROOM_LON, 0.0, t);
-        fix(c, SHOWROOM_LAT + 0.00005, SHOWROOM_LON, 2.0, t.plusMinutes(1)); // GPS drift while parked
-        assertTrue(alertsFor(showroom, CarGuardService.CAR_GUARD).isEmpty());
-
         fix(c, north(SHOWROOM_LAT, 400), SHOWROOM_LON, 40.0, t.plusMinutes(3));
-        List<Alert> a = alertsFor(showroom, CarGuardService.CAR_GUARD);
-        assertEquals(1, a.size());
-        assertTrue(a.get(0).getMessage().contains("is moving (40 km/h)"), a.get(0).getMessage());
-        assertTrue(a.get(0).getMessage().contains("400 m from its parking place"), a.get(0).getMessage());
-        assertEquals(c.getId(), a.get(0).getCarId());
-        fix(c, north(SHOWROOM_LAT, 700), SHOWROOM_LON, 45.0, t.plusMinutes(3).plusSeconds(30));
-        assertEquals(1, alertsFor(showroom, CarGuardService.CAR_GUARD).size(), "once per 10 minutes");
-
-        // A second car, with the owner's own phone travelling in it: no alarm.
-        GuardedCar c2 = car(addCar(showroom, "AP 16 CC 1111", true));
-        guard.update(showroom, c2.getId(), on, null);
-        live(showroom, north(SHOWROOM_LAT, 900), SHOWROOM_LON);
-        fix(c2, north(SHOWROOM_LAT, 950), SHOWROOM_LON, 35.0, LocalDateTime.now());
-        assertEquals(1, alertsFor(showroom, CarGuardService.CAR_GUARD).size());
-    }
-
-    @Test
-    void nightIsTheOwnersHours() {
-        GuardedCar c = GuardedCar.builder().nightFrom(22).nightTo(6).build();
-        LocalDateTime day = LocalDateTime.of(2026, 11, 4, 12, 0);
-        java.time.ZoneId here = java.time.ZoneId.systemDefault();
-        java.util.function.Function<Integer, LocalDateTime> ist = h -> day.withHour(h)
-                .atZone(java.time.ZoneId.of("Asia/Kolkata")).withZoneSameInstant(here).toLocalDateTime();
-        assertTrue(CarGuardService_isNight(c, ist.apply(23)));
-        assertTrue(CarGuardService_isNight(c, ist.apply(2)));
-        assertFalse(CarGuardService_isNight(c, ist.apply(6)));
-        assertFalse(CarGuardService_isNight(c, ist.apply(14)));
-        GuardedCar yard = GuardedCar.builder().nightFrom(20).nightTo(23).build();
-        assertTrue(CarGuardService_isNight(yard, ist.apply(21)));
-        assertFalse(CarGuardService_isNight(yard, ist.apply(23)));
-    }
-
-    static boolean CarGuardService_isNight(GuardedCar c, LocalDateTime at) {
-        try {
-            var m = CarGuardService.class.getDeclaredMethod("isNight", GuardedCar.class, LocalDateTime.class);
-            m.setAccessible(true);
-            return (boolean) m.invoke(null, c, at);
-        } catch (ReflectiveOperationException e) {
-            throw new AssertionError(e);
-        }
+        assertTrue(alertsFor(showroom).isEmpty(), alertsFor(showroom).toString());
+        Map<String, Object> v = guard.get(showroom, c.getId(), null);
+        assertNull(v.get("nightGuard"));
+        assertNull(v.get("armed"));
+        assertEquals("MOVING", v.get("state"));
+        // A tracker shaking or a door opening while parked isn't news either; a cut wire is.
+        guard.ingest(new CarGuardService.Fix(c.getTrackerId(), north(SHOWROOM_LAT, 410), SHOWROOM_LON, 0.0, null, null, null,
+                t.plusMinutes(3).plusSeconds(30), "vibration"));
+        assertTrue(alertsFor(showroom).isEmpty());
     }
 
     @Test
@@ -218,7 +187,6 @@ class CarGuardTest {
         CarRequest r = new CarRequest();
         r.setSpeedAlerts(true);
         r.setSpeedLimitKmh(60);
-        r.setNightGuard(false);
         guard.update(showroom, c.getId(), r, null);
         LocalDateTime t = LocalDateTime.now().minusMinutes(2);
         fix(c, SHOWROOM_LAT, SHOWROOM_LON, 50.0, t);
@@ -260,8 +228,9 @@ class CarGuardTest {
         List<Alert> a = alertsFor(showroom, CarGuardService.TEST_DRIVE);
         assertEquals(2, a.size(), a.toString());
         assertTrue(a.stream().anyMatch(x -> x.getMessage().contains("Suresh Babu is doing 95 km/h")));
-        assertTrue(a.stream().anyMatch(x -> x.getMessage().contains("from the showroom (allowed 1 km)")));
-        // The guard stays quiet during a test drive.
+        assertTrue(a.stream().anyMatch(x -> x.getMessage().contains("from the start (allowed 1 km)")));
+        assertTrue(a.stream().allMatch(x -> x.getBookingId() != null), "they open the test drive");
+        // No speed alerts of the car's own during a test drive.
         assertTrue(alertsFor(showroom, CarGuardService.CAR_GUARD).isEmpty());
 
         fix(c, north(SHOWROOM_LAT, 900), SHOWROOM_LON, 40.0, t.plusSeconds(110));
@@ -288,10 +257,10 @@ class CarGuardTest {
         r.setCustomerPhone("9848055555");
         r.setMinutes(10);
         guard.startTestDrive(showroom, c.getId(), r);
-        TestDrive d = db.rows(TestDrive.class).get(0);
+        TestDriveBooking d = db.rows(TestDriveBooking.class).get(0);
         d.setDueBackAt(LocalDateTime.now().minusMinutes(1));
-        assertEquals(1, guard.checkTestDrives());
-        assertEquals(0, guard.checkTestDrives());
+        assertEquals(1, market.checkBookings());
+        assertEquals(0, market.checkBookings());
         Alert a = alertsFor(showroom, CarGuardService.TEST_DRIVE).get(0);
         assertTrue(a.getMessage().contains("Late Larry should have been back"), a.getMessage());
         assertTrue(a.getMessage().contains("+919848055555"), a.getMessage());
@@ -457,7 +426,7 @@ class CarGuardTest {
         assertTrue(guard.testDrives(buyer, c.getId()).isEmpty(), "the showroom's customers stay private");
         assertTrue(((List<?>) guard.trail(buyer, c.getId(), 24).get("points")).isEmpty());
         assertNotEquals(oldToken, c.getTrackToken());
-        assertEquals(false, c.getGuardOn());
+        assertNull(c.getHomeLatitude());
         assertFalse(alertsFor(buyer, CarGuardService.CAR_GUARD).isEmpty());
         // The tracker keeps working for the new owner.
         fix(c, SHOWROOM_LAT, SHOWROOM_LON, 0.0, LocalDateTime.now());

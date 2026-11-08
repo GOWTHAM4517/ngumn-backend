@@ -59,6 +59,14 @@ public class Alert {
     @Column(name = "car_id")
     private Long carId;
 
+    /** Buy & Sell: the vehicle for sale it's about, if any - the app opens it. */
+    @Column(name = "listing_id")
+    private Long listingId;
+
+    /** Buy & Sell: the test drive it's about, if any - the app opens it. */
+    @Column(name = "booking_id")
+    private Long bookingId;
+
     @Column(nullable = false)
     @Builder.Default
     private Boolean acknowledged = false;
