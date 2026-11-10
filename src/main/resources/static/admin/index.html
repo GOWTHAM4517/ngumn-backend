@@ -258,6 +258,34 @@
         </div>
         <div id="complaintsBoard"><div class="empty">Loading…</div></div>
       </section>
+      <section>
+        <h2>Official channels - where complaints are filed</h2>
+        <div class="sub" style="margin:-4px 0 10px">People see these on every complaint: call, WhatsApp or open the portal with the complaint already written. A channel with an <b>email</b> and "email automatically" on gets each new complaint emailed by Raksio, with a link the department uses to answer (taken up / fixed / not ours) - the person sees it in the app at once, and one reminder goes when it's past its deadline. Only add addresses and numbers from the department's official website or notice.</div>
+        <div class="panel" id="authMail"><div class="empty">Loading…</div></div>
+        <div id="authList"><div class="empty">Loading…</div></div>
+        <div class="panel">
+          <div class="title" style="font-weight:700" id="authFormTitle">Add a channel</div>
+          <div class="form-grid">
+            <div><label for="aName">NAME</label><input id="aName" maxlength="80" placeholder="Vijayawada Municipal Corporation" /></div>
+            <div><label for="aTeam">DEPARTMENT</label><select id="aTeam"><option value="">Every department</option></select></div>
+            <div><label for="aLevel">LEVEL</label><select id="aLevel"><option value="CITY">City</option><option value="STATE">State</option><option value="NATIONAL">National</option><option value="EMERGENCY">Emergency</option></select></div>
+            <div><label for="aTypes">ONLY THESE KINDS (OPTIONAL)</label><input id="aTypes" placeholder="POTHOLE,GARBAGE" /></div>
+            <div><label for="aEmail">GRIEVANCE EMAIL</label><input id="aEmail" maxlength="120" placeholder="from their official site" /></div>
+            <div><label for="aPhone">HELPLINE</label><input id="aPhone" maxlength="20" placeholder="1100" /></div>
+            <div><label for="aWhatsapp">WHATSAPP</label><input id="aWhatsapp" maxlength="20" placeholder="+91 ..." /></div>
+            <div><label for="aSms">SMS</label><input id="aSms" maxlength="20" /></div>
+            <div><label for="aPortal">PORTAL / WEBSITE</label><input id="aPortal" maxlength="200" placeholder="https://" /></div>
+            <div><label for="aOrder">ORDER</label><input id="aOrder" placeholder="100" /></div>
+            <div><label for="aLat">AREA CENTRE LAT (OPTIONAL)</label><input id="aLat" placeholder="16.5062" /></div>
+            <div><label for="aLng">AREA CENTRE LNG</label><input id="aLng" placeholder="80.6480" /></div>
+            <div><label for="aRadius">AREA RADIUS KM</label><input id="aRadius" placeholder="25" /></div>
+          </div>
+          <label for="aNote">NOTE FOR PEOPLE (OPTIONAL)</label><input id="aNote" maxlength="200" placeholder="e.g. Sanitation, drains, streetlights, water supply" />
+          <div style="margin-top:10px"><label style="display:inline"><input type="checkbox" id="aAuto" checked /> Email new complaints automatically</label> &nbsp; <label style="display:inline"><input type="checkbox" id="aActive" checked /> Shown to people</label></div>
+          <button id="aSave" style="margin-top:14px">Save channel</button> <button id="aCancel" class="secondary" style="margin-top:14px;display:none">Cancel</button>
+          <div id="aOut"></div>
+        </div>
+      </section>
     </div>
 
     <!-- PEOPLE -->
@@ -487,7 +515,7 @@
     if (isAdmin()) loadResponderList().then(loadOverview); else loadOverview();
     if (tab === 'analytics') loadAnalytics();
     if (tab === 'emergencies') loadEmergencies();
-    if (tab === 'complaints') loadComplaintBoard();
+    if (tab === 'complaints') { loadComplaintBoard(); loadAuthority(); }
     if (tab === 'people') { loadRequests(); loadUsers(); }
     if (tab === 'community') { loadMarket(); loadReports(); loadRuleBreakers(); loadViolations(); loadCorridors(); loadAlerts(); }
     if (tab === 'setup') loadChannels();
@@ -922,6 +950,65 @@
       ['rName', 'rEmail', 'rPassword', 'rUnit'].forEach(function (id) { $(id).value = ''; });
       loadUsers(); loadResponderList();
     }).catch(function (e) { flash(msg, false, e.message); });
+  });
+
+  // ---------------------------------------------------------------- official complaint channels
+  var authEditing = null, authRows = [];
+  Object.keys(TEAMS).forEach(function (t) { var o = document.createElement('option'); o.value = t; o.textContent = TEAMS[t]; $('aTeam').appendChild(o); });
+  function loadAuthority() {
+    if (!isAdmin()) { $('authList').innerHTML = '<div class="empty">Admins only.</div>'; $('authMail').style.display = 'none'; return; }
+    api('/api/admin/authority-channels').then(function (r) {
+      authRows = r.channels || [];
+      var m = r.email || {};
+      $('authMail').innerHTML = '<div class="meta"><b>Complaint emails</b>: ' + (m.provider && m.provider !== 'none'
+        ? '<span class="tag good">on via ' + esc(m.provider) + ' from ' + esc(m.from) + '</span>'
+        : '<span class="tag warn">not set up</span> - set <code>MAIL_API_KEY</code> and <code>MAIL_FROM</code> (Brevo, free: verify your sender address there) on the server. Until then complaints show "email not set up", never "sent".') +
+        ' · ' + (m.withEmail || 0) + ' channel(s) with an email address</div>';
+      if (!authRows.length) { $('authList').innerHTML = '<div class="empty">No channels yet.</div>'; return; }
+      $('authList').innerHTML = authRows.map(function (c) {
+        var ways = [c.email ? 'email ' + esc(c.email) + (c.autoEmail ? ' (automatic)' : '') : '', c.phone ? 'call ' + esc(c.phone) : '', c.whatsapp ? 'WhatsApp ' + esc(c.whatsapp) : '',
+          c.sms ? 'SMS ' + esc(c.sms) : '', c.portalUrl ? '<a href="' + esc(c.portalUrl) + '" target="_blank" rel="noopener">portal</a>' : ''].filter(Boolean).join(' · ');
+        return '<div class="card-row"><div class="main"><div class="title">' + esc(c.name) + ' <span class="tag blue">' + esc(c.level) + '</span>' +
+          (c.team ? '<span class="tag">' + esc(TEAMS[c.team] || c.team) + '</span>' : '<span class="tag">every department</span>') +
+          (c.active ? '' : '<span class="tag warn">hidden</span>') + '</div>' +
+          '<div class="meta">' + ways + (c.types ? ' · only ' + esc(c.types) : '') + (c.radiusKm ? ' · within ' + esc(c.radiusKm) + ' km' : '') + '</div>' +
+          (c.note ? '<div class="meta">' + esc(c.note) + '</div>' : '') + '</div>' +
+          '<div class="actions"><button class="secondary" data-aedit="' + c.id + '">Edit</button><button class="danger" data-adel="' + c.id + '">Delete</button></div></div>';
+      }).join('');
+      $('authList').querySelectorAll('[data-aedit]').forEach(function (b) { b.addEventListener('click', function () { editAuthority(Number(b.getAttribute('data-aedit'))); }); });
+      $('authList').querySelectorAll('[data-adel]').forEach(function (b) { b.addEventListener('click', function () {
+        var c = authRows.find(function (x) { return x.id === Number(b.getAttribute('data-adel')); });
+        if (!c || !confirm('Delete "' + c.name + '"? People stop seeing it.')) return;
+        api('/api/admin/authority-channels/' + c.id, { method: 'DELETE' }).then(loadAuthority).catch(function (e) { alert(e.message); });
+      }); });
+    }).catch(function (e) { $('authList').innerHTML = '<div class="empty">' + esc(e.message) + '</div>'; });
+  }
+  var AUTH_FIELDS = { aName: 'name', aTeam: 'team', aLevel: 'level', aTypes: 'types', aEmail: 'email', aPhone: 'phone', aWhatsapp: 'whatsapp', aSms: 'sms', aPortal: 'portalUrl', aNote: 'note', aOrder: 'sortOrder', aLat: 'centerLatitude', aLng: 'centerLongitude', aRadius: 'radiusKm' };
+  function editAuthority(id) {
+    var c = authRows.find(function (x) { return x.id === id; });
+    if (!c) return;
+    authEditing = id;
+    Object.keys(AUTH_FIELDS).forEach(function (f) { var v = c[AUTH_FIELDS[f]]; $(f).value = v == null ? '' : v; });
+    $('aAuto').checked = c.autoEmail !== false; $('aActive').checked = c.active !== false;
+    $('authFormTitle').textContent = 'Change "' + c.name + '"'; $('aCancel').style.display = '';
+    $('aName').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+  function resetAuthority() {
+    authEditing = null;
+    Object.keys(AUTH_FIELDS).forEach(function (f) { $(f).value = ''; });
+    $('aLevel').value = 'CITY'; $('aAuto').checked = true; $('aActive').checked = true;
+    $('authFormTitle').textContent = 'Add a channel'; $('aCancel').style.display = 'none';
+  }
+  $('aCancel').addEventListener('click', resetAuthority);
+  $('aSave').addEventListener('click', function () {
+    var body = {};
+    Object.keys(AUTH_FIELDS).forEach(function (f) { var v = $(f).value.trim(); body[AUTH_FIELDS[f]] = v === '' ? null : v; });
+    ['sortOrder', 'centerLatitude', 'centerLongitude', 'radiusKm'].forEach(function (k) { if (body[k] != null) body[k] = Number(body[k]); });
+    body.autoEmail = $('aAuto').checked; body.active = $('aActive').checked;
+    var out = $('aOut');
+    api(authEditing ? '/api/admin/authority-channels/' + authEditing : '/api/admin/authority-channels', { method: authEditing ? 'PUT' : 'POST', body: body })
+      .then(function (c) { flash(out, true, 'Saved "' + c.name + '".'); resetAuthority(); loadAuthority(); })
+      .catch(function (e) { flash(out, false, e.message); });
   });
 
   // ---------------------------------------------------------------- setup

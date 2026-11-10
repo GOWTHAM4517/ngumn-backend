@@ -91,7 +91,7 @@ public class IncidentResponse {
                 responderView ? i.getReporter().getName() : null,
                 i.getReporter().getId().equals(viewerId),
                 i.getAssignee() != null && i.getAssignee().getId().equals(viewerId),
-                i.getAssignee() != null ? unitOf(i.getAssignee()) : null,
+                i.getAssignee() != null ? unitOf(i.getAssignee()) : i.getExternalHandler(),
                 i.getEtaMinutes(),
                 i.getOutcome() != null ? i.getOutcome().name() : null,
                 i.getOutcome() != null ? i.getOutcome().label() : null,

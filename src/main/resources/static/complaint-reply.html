@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex" />
+<title>Raksio complaint - answer it</title>
+<style>
+  :root { --bg: #F4F6FA; --card: #FFFFFF; --text: #0F1B2D; --muted: #5B6B80; --blue: #1E5AA8; --green: #148A47; --red: #C81E1E; --border: #E1E6EE; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #07111F; --card: #0D1C2E; --text: #FFFFFF; --muted: #93A3B8; --border: #172D46; } }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  .wrap { max-width: 640px; margin: 0 auto; padding: 18px 16px 40px; }
+  .brand { font-weight: 800; letter-spacing: .3px; color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+  .banner { background: var(--blue); color: #fff; border-radius: 16px; padding: 16px 18px; }
+  .banner.ok { background: var(--green); }
+  .banner.closed { background: #46586D; }
+  .banner h1 { font-size: 20px; margin: 0 0 4px; }
+  .banner p { margin: 0; font-size: 14px; opacity: .92; line-height: 1.45; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px 16px; margin-top: 12px; }
+  .card h2 { font-size: 13px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .row { display: flex; gap: 12px; font-size: 15px; padding: 7px 0; border-top: 1px solid var(--border); }
+  .row:first-of-type { border-top: none; }
+  .row b { min-width: 110px; color: var(--muted); font-weight: 600; }
+  a { color: var(--blue); }
+  label { display: block; font-size: 13px; color: var(--muted); margin: 12px 0 6px; }
+  input, textarea { width: 100%; font: inherit; padding: 11px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); }
+  textarea { min-height: 74px; resize: vertical; }
+  .buttons { display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 16px; }
+  button { font: inherit; font-weight: 700; padding: 14px; border-radius: 12px; border: 0; cursor: pointer; font-size: 15px; }
+  button.accept { background: var(--blue); color: #fff; }
+  button.resolve { background: var(--green); color: #fff; }
+  button.reject { background: transparent; color: var(--red); border: 1px solid var(--border); }
+  button:disabled { opacity: .6; cursor: default; }
+  .muted { color: var(--muted); font-size: 12px; margin-top: 12px; line-height: 1.5; }
+  .error { color: var(--red); font-size: 14px; margin-top: 10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="brand">RAKSIO · NGUMN</div>
+  <div class="banner" id="banner"><h1 id="headline">Loading…</h1><p id="sub"></p></div>
+
+  <div class="card" id="details" style="display:none">
+    <h2>The complaint</h2>
+    <div id="rows"></div>
+  </div>
+
+  <div class="card" id="answerCard" style="display:none">
+    <h2>Your answer</h2>
+    <label for="name">Your name and post (optional)</label>
+    <input id="name" maxlength="80" placeholder="e.g. Ravi, AE Ward 12" />
+    <label for="note">A word for the citizen (optional)</label>
+    <textarea id="note" maxlength="300" placeholder="e.g. Team visits tomorrow morning"></textarea>
+    <label for="ref">Your complaint number, if you gave it one (optional)</label>
+    <input id="ref" maxlength="60" placeholder="e.g. PGRS 2026-123456" />
+    <div class="buttons">
+      <button class="accept" data-a="ACCEPT">We've taken it up</button>
+      <button class="resolve" data-a="RESOLVE">It's fixed</button>
+      <button class="reject" data-a="REJECT">Not our department</button>
+    </div>
+    <div class="error" id="error"></div>
+    <p class="muted">The citizen sees your answer in the Raksio app straight away. Nothing happens until you press a button.</p>
+  </div>
+</div>
+<script>
+(function () {
+  var token = new URLSearchParams(location.search).get('t') || '';
+  var api = '/api/authority/reply/' + encodeURIComponent(token);
+  var $ = function (id) { return document.getElementById(id); };
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+  function row(k, v) { return v ? '<div class="row"><b>' + esc(k) + '</b><span>' + v + '</span></div>' : ''; }
+  var ANSWER = { ACCEPTED: 'You took it up', RESOLVED: 'Marked fixed', REJECTED: 'Marked "not our department"' };
+
+  function show(d) {
+    $('details').style.display = 'block';
+    $('rows').innerHTML =
+      row('What', esc(d.what)) +
+      row('Details', d.details ? '&ldquo;' + esc(d.details) + '&rdquo;' : '') +
+      row('Where', '<a href="' + esc(d.map) + '" target="_blank" rel="noopener">Open on the map</a>') +
+      row('Filed', esc(d.filedAt)) +
+      row('Fix by', esc(d.dueAt)) +
+      row('Citizen', d.citizen ? esc(d.citizen) + (d.phone ? ' · <a href="tel:' + esc(d.phone) + '">' + esc(d.phone) + '</a>' : '') : 'Chose not to share contact details') +
+      row('Raksio no.', esc(d.raksioNo)) +
+      row('Your no.', esc(d.officialRef));
+    var b = $('banner');
+    if (d.withdrawn) {
+      b.className = 'banner closed'; $('headline').textContent = 'Withdrawn by the citizen'; $('sub').textContent = 'Nothing more to do.';
+      $('answerCard').style.display = 'none'; return;
+    }
+    if (d.answer) {
+      b.className = 'banner' + (d.answer === 'RESOLVED' ? ' ok' : d.answer === 'REJECTED' ? ' closed' : '');
+      $('headline').textContent = ANSWER[d.answer] || 'Answered';
+      $('sub').textContent = 'The citizen has been told' + (d.answeredBy ? ' (' + d.answeredBy + ')' : '') + '.' + (d.answer === 'ACCEPTED' ? ' Come back to this link when it\'s fixed.' : '');
+    } else {
+      b.className = 'banner';
+      $('headline').textContent = 'A complaint for the ' + d.department;
+      $('sub').textContent = 'Filed by a citizen through Raksio. Please tell them what happens.';
+    }
+    $('answerCard').style.display = d.answer === 'RESOLVED' ? 'none' : 'block';
+    if (d.answer === 'ACCEPTED') document.querySelector('button.accept').style.display = 'none';
+  }
+
+  function fail(msg) {
+    $('banner').className = 'banner closed';
+    $('headline').textContent = 'This link isn\'t valid';
+    $('sub').textContent = msg || 'It may have been mistyped. Open it from the email again.';
+  }
+
+  fetch(api).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+    .then(function (x) { if (x.ok) show(x.j); else fail(x.j && x.j.message); })
+    .catch(function () { fail('Couldn\'t reach Raksio - check the internet and try again.'); });
+
+  Array.prototype.forEach.call(document.querySelectorAll('button[data-a]'), function (btn) {
+    btn.addEventListener('click', function () {
+      var buttons = document.querySelectorAll('button[data-a]');
+      Array.prototype.forEach.call(buttons, function (x) { x.disabled = true; });
+      $('error').textContent = '';
+      fetch(api, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: btn.getAttribute('data-a'), name: $('name').value, note: $('note').value, officialRef: $('ref').value }) })
+        .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+        .then(function (x) { if (x.ok) { show(x.j); window.scrollTo(0, 0); } else { $('error').textContent = (x.j && x.j.message) || 'That didn\'t work.'; } })
+        .catch(function () { $('error').textContent = 'Couldn\'t reach Raksio - try again.'; })
+        .then(function () { Array.prototype.forEach.call(buttons, function (x) { x.disabled = false; }); });
+    });
+  });
+})();
+</script>
+</body>
+</html>

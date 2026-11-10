@@ -33,4 +33,10 @@ public class IncidentRequest {
 
     @Size(max = 500)
     private String description;
+
+    /**
+     * Complaints filed officially (email to the department, ComplaintFilingService):
+     * may the department see the person's name and phone number? Off unless sent as true.
+     */
+    private Boolean shareContact;
 }

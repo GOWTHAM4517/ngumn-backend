@@ -23,5 +23,7 @@ public class WebUiConfig implements WebMvcConfigurer {
         registry.addViewController("/track").setViewName("forward:/track.html");
         // Car guard: the police's live page for a stolen car.
         registry.addViewController("/car").setViewName("forward:/car.html");
+        // A department's answer to a complaint emailed to it (ComplaintFilingService).
+        registry.addViewController("/complaint-reply").setViewName("forward:/complaint-reply.html");
     }
 }

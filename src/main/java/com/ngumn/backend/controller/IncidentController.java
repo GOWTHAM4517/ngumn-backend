@@ -8,7 +8,9 @@ import com.ngumn.backend.dto.IncidentUpdateRequest;
 import com.ngumn.backend.dto.RatingRequest;
 import com.ngumn.backend.entity.User;
 import com.ngumn.backend.service.AuthService;
+import com.ngumn.backend.service.ComplaintFilingService;
 import com.ngumn.backend.service.IncidentService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -29,18 +31,31 @@ public class IncidentController {
 
     private final IncidentService incidentService;
     private final AuthService authService;
+    private final ComplaintFilingService filings;
 
-    public IncidentController(IncidentService incidentService, AuthService authService) {
+    public IncidentController(IncidentService incidentService, AuthService authService, ComplaintFilingService filings) {
         this.incidentService = incidentService;
         this.authService = authService;
+        this.filings = filings;
     }
 
-    /** Ask for help. Returns the request - two for an accident with people hurt (police + ambulance). */
+    /**
+     * Ask for help, or complain. Returns the request - two for an accident with
+     * people hurt (police + ambulance). A complaint is also emailed to the
+     * official channels that have an address for it (ComplaintFilingService).
+     */
     @PostMapping
     public ResponseEntity<List<IncidentResponse>> create(@RequestHeader("Authorization") String authorization,
-                                                         @Valid @RequestBody IncidentRequest request) {
+                                                         @Valid @RequestBody IncidentRequest request, HttpServletRequest http) {
         User user = authService.requireUser(authorization);
-        return ResponseEntity.ok(incidentService.create(user, request));
+        List<IncidentResponse> made = incidentService.create(user, request);
+        try {
+            filings.fileNew(user, made.stream().map(IncidentResponse::getId).toList(), SosController.baseOf(http));
+        } catch (RuntimeException e) {
+            // The complaint is made either way; its screen shows what was filed.
+            org.slf4j.LoggerFactory.getLogger(IncidentController.class).warn("Official filing failed: {}", e.toString());
+        }
+        return ResponseEntity.ok(made);
     }
 
     @GetMapping("/mine")

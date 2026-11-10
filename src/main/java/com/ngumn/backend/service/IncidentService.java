@@ -202,6 +202,7 @@ public class IncidentService {
                     .sosEventId(sosEventId)
                     .dueAt(complaint ? now().plusHours(r.getType().slaHours()) : null)
                     .escalationLevel(0)
+                    .shareContact(Boolean.TRUE.equals(r.getShareContact()))
                     .build());
             made.add(incident);
             tellTeam(incident, user);
@@ -417,6 +418,48 @@ public class IncidentService {
         boolean responderView = viewer.getResponderTeam() == i.getTeam() || viewer.getRole() == Role.ADMIN;
         int p = priorityNow(i);
         return IncidentResponse.from(i, viewer.getId(), responderView, p, urgencyOf(p), distance, now());
+    }
+
+    // ------------------------------------------------------------------ answers from outside Raksio
+
+    /**
+     * A department answered through the reply link in its complaint email
+     * (ComplaintFilingService): ACCEPTED (taken up), RESOLVED (fixed) or
+     * REJECTED (not theirs). The person who asked is told; a Raksio unit
+     * already on it stays in charge.
+     */
+    @Transactional
+    public void externalUpdate(Long incidentId, String handler, String action, String note) {
+        Incident incident = find(incidentId);
+        String extra = note != null && !note.isBlank() ? " \"" + note.trim() + "\"" : "";
+        String noun = incident.getType().noun();
+        switch (action) {
+            case "ACCEPTED" -> {
+                if (incident.getStatus() == IncidentStatus.OPEN) {
+                    incident.setStatus(IncidentStatus.ACCEPTED);
+                    incident.setAcceptedAt(now());
+                }
+                if (incident.getAssignee() == null) incident.setExternalHandler(handler);
+                incidentRepository.save(incident);
+                note(incident.getReporter(), incident, TAKEN_UP, handler + " has taken up your " + noun + "." + extra);
+            }
+            case "RESOLVED" -> {
+                if (incident.getStatus().active()) {
+                    incident.setStatus(IncidentStatus.RESOLVED);
+                    incident.setOutcome(IncidentOutcome.FIXED);
+                    incident.setClosedAt(now());
+                    endCorridor(incident);
+                }
+                if (incident.getAssignee() == null) incident.setExternalHandler(handler);
+                incidentRepository.save(incident);
+                note(incident.getReporter(), incident, RESOLVED, handler + " says your " + noun + " is fixed." + extra
+                        + " Rate how it was handled in Raksio.");
+            }
+            case "REJECTED" -> note(incident.getReporter(), incident, ESCALATED, handler + " says your " + noun
+                    + " isn't theirs to fix." + extra + " Raksio's department team still has it - and you can file it with PGRS (1100).");
+            default -> throw ApiException.badRequest("Unknown answer.");
+        }
+        changed(incident);
     }
 
     // ------------------------------------------------------------------ rating

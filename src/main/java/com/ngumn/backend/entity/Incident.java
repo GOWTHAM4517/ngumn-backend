@@ -149,6 +149,18 @@ public class Incident {
     @Column(name = "backup_of_id")
     private Long backupOfId;
 
+    /**
+     * Taken up outside Raksio - a department answering through the reply link
+     * in its complaint email (ComplaintFilingService): "Vijayawada Municipal
+     * Corporation". Shown as who's handling it when no Raksio unit is.
+     */
+    @Column(name = "external_handler", length = 120)
+    private String externalHandler;
+
+    /** The person agreed that departments may see their name and phone number (official filing). */
+    @Column(name = "share_contact")
+    private Boolean shareContact;
+
     @PrePersist
     protected void onCreate() {
         if (this.createdAt == null) this.createdAt = LocalDateTime.now();
