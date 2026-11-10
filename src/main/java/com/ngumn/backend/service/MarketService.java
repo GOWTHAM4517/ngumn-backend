@@ -49,6 +49,12 @@ import java.util.function.Predicate;
  *              a Car guard car and its tracker can go to the buyer's account.
  *   Reports    fake / scam / stolen... - three people's reports hide it until
  *              an admin looks.
+ *   Area       one city and the towns around it (MarketArea: Vijayawada,
+ *              Gannavaram, Amaravati, Mangalagiri, Guntur...), so every buyer
+ *              can reach every seller.
+ *   Offers     a price, or the buyer's own vehicle in exchange
+ *              (MarketOfferService); "Looking for" and "for sale near you" on
+ *              the road (MarketRoadService).
  * </pre>
  *
  * Messages start with a fixed headline the app shows as the notification
@@ -113,11 +119,18 @@ public class MarketService {
     private final AlertService alerts;
     private final IncidentService incidents;
     private final NgumnWebSocketHandler webSocket;
+    private final MarketOfferRepository offers;
+    private final MarketRoadService road;
+    private final MarketArea area;
 
     public MarketService(MarketListingRepository listings, ListingPhotoRepository photos, TestDriveBookingRepository bookings,
                          ListingReportRepository reports, GuardedCarRepository cars, CarPositionRepository positions,
                          CarSightingRepository sightings, UserRepository users, AlertService alerts,
-                         IncidentService incidents, NgumnWebSocketHandler webSocket) {
+                         IncidentService incidents, NgumnWebSocketHandler webSocket, MarketOfferRepository offers,
+                         MarketRoadService road, MarketArea area) {
+        this.offers = offers;
+        this.road = road;
+        this.area = area;
         this.listings = listings;
         this.photos = photos;
         this.bookings = bookings;
@@ -160,6 +173,7 @@ public class MarketService {
         if (r.getLatitude() == null || r.getLongitude() == null || !validPoint(r.getLatitude(), r.getLongitude())) {
             throw ApiException.badRequest("Where can buyers see it? Turn on location.");
         }
+        if (!area.contains(r.getLatitude(), r.getLongitude())) throw ApiException.badRequest(area.outsideMessage(r.getLatitude(), r.getLongitude()));
         if ((sellerType.equals("DEALER") || sellerType.equals("SHOWROOM")) && text(r.getBusinessName()) == null) {
             throw ApiException.badRequest("Type the " + (sellerType.equals("SHOWROOM") ? "showroom's" : "dealership's") + " name.");
         }
@@ -183,11 +197,19 @@ public class MarketService {
                 .longitude(r.getLongitude())
                 .status("ACTIVE")
                 .speedLimitKmh(vehicleType.equals("CAR") || vehicleType.equals("COMMERCIAL") ? 80 : 60)
+                // Dealers and showrooms usually take the buyer's vehicle in exchange.
+                .exchange(sellerType.equals("DEALER") || sellerType.equals("SHOWROOM"))
                 .build();
         apply(l, r, seller);
         if (condition.equals("NEW") && l.getKmDriven() == null) l.setKmDriven(0);
         MarketListing saved = listings.save(l);
         changed(saved, null);
+        // People looking for one like it hear about it.
+        try {
+            road.newListing(saved);
+        } catch (RuntimeException e) {
+            log.warn("Looking-for notes failed: {}", e.toString());
+        }
         return detailFor(seller, saved);
     }
 
@@ -204,6 +226,7 @@ public class MarketService {
             if (r.getLatitude() == null || r.getLongitude() == null || !validPoint(r.getLatitude(), r.getLongitude())) {
                 throw ApiException.badRequest("That location doesn't look right.");
             }
+            if (!area.contains(r.getLatitude(), r.getLongitude())) throw ApiException.badRequest(area.outsideMessage(r.getLatitude(), r.getLongitude()));
             l.setLatitude(r.getLatitude());
             l.setLongitude(r.getLongitude());
         }
@@ -252,6 +275,8 @@ public class MarketService {
         if (r.getLoanCleared() != null) l.setLoanCleared(r.getLoanCleared());
         if (r.getArea() != null) l.setArea(text(r.getArea()));
         if (r.getTestDrives() != null) l.setTestDrives(r.getTestDrives());
+        if (r.getExchange() != null) l.setExchange(r.getExchange());
+        if (r.getShowOnRoad() != null) l.setShowOnRoad(r.getShowOnRoad());
         if (r.getDriveMinutes() != null) l.setDriveMinutes(r.getDriveMinutes());
         if (r.getDriveRadiusM() != null) l.setDriveRadiusM(r.getDriveRadiusM());
         if (r.getSpeedLimitKmh() != null) l.setSpeedLimitKmh(r.getSpeedLimitKmh());
@@ -273,7 +298,7 @@ public class MarketService {
             String key = CarGuardService.plateKey(r.getPlate());
             if (key != null && !key.equals(l.getPlateKey())) {
                 if (key.length() < 6) throw ApiException.badRequest("That number plate looks too short.");
-                stolenCheck(seller, key, r.getPlate().trim(), l);
+                checkNotStolen(seller, key, r.getPlate().trim(), l.getLatitude(), l.getLongitude(), l.getArea(), "sell");
                 List<MarketListing> same = listings.findByPlateKeyAndStatusIn(key, OPEN).stream()
                         .filter(o -> !Objects.equals(o.getId(), l.getId())).toList();
                 if (!same.isEmpty()) {
@@ -295,32 +320,35 @@ public class MarketService {
     }
 
     /**
-     * A plate reported stolen in Raksio can't be sold. Someone else trying to
-     * sell it is a sighting: its owner and the police on the case are told who
-     * and where.
+     * A plate reported stolen in Raksio can't be sold here or traded in
+     * (doing: "sell" or "trade in"). Someone else trying is a sighting: its
+     * owner and the police on the case are told who and where.
      */
-    private void stolenCheck(User seller, String key, String typed, MarketListing l) {
+    public void checkNotStolen(User who, String key, String typed, double lat, double lon, String place, String doing) {
+        if (key == null) return;
+        boolean sell = doing.equals("sell");
         for (GuardedCar car : cars.findByStatus("STOLEN")) {
             if (!key.equals(car.getPlateKey())) continue;
-            if (car.getOwner().getId().equals(seller.getId())) {
+            if (car.getOwner().getId().equals(who.getId())) {
                 throw ApiException.badRequest("Your " + car.getName() + " is reported stolen. Mark it found in Car guard first.");
             }
-            String who = seller.getName() + (seller.getPhone() != null ? " (" + seller.getPhone() + ")" : "");
-            String where = l.getArea() != null ? " in " + l.getArea() : "";
-            sightings.save(CarSighting.builder().carId(car.getId()).reporter(seller).latitude(l.getLatitude())
-                    .longitude(l.getLongitude()).note("Someone tried to sell it on Raksio Buy & Sell" + where).source("MARKET")
-                    .at(now()).build());
-            alerts.raiseAboutCar(car.getOwner(), RiskLevel.HIGH, CarGuardService.STOLEN_SEEN + ": someone tried to sell your "
-                    + car.getName() + " on Raksio Buy & Sell" + where + ". The police have been told - don't go there yourself.",
-                    l.getLatitude(), l.getLongitude(), car.getId(), car.getTheftIncidentId());
+            String person = who.getName() + (who.getPhone() != null ? " (" + who.getPhone() + ")" : "");
+            String where = place != null ? (sell ? " in " : " at ") + place : "";
+            String tried = sell ? "sell it on Raksio Buy & Sell" : "trade it in on Raksio Buy & Sell";
+            sightings.save(CarSighting.builder().carId(car.getId()).reporter(who).latitude(lat).longitude(lon)
+                    .note("Someone tried to " + tried + where).source("MARKET").at(now()).build());
+            alerts.raiseAboutCar(car.getOwner(), RiskLevel.HIGH, CarGuardService.STOLEN_SEEN + ": someone tried to "
+                    + (sell ? "sell" : "trade in") + " your " + car.getName() + " on Raksio Buy & Sell" + where
+                    + ". The police have been told - don't go there yourself.", lat, lon, car.getId(), car.getTheftIncidentId());
             if (car.getTheftIncidentId() != null) {
                 boolean liveTracker = car.getLastSeenAt() != null && car.getLastSeenAt().isAfter(now().minusMinutes(10));
-                if (!liveTracker) incidents.moveTo(car.getTheftIncidentId(), l.getLatitude(), l.getLongitude());
-                incidents.tellAssignee(car.getTheftIncidentId(), CarGuardService.STOLEN_SEEN + ": someone tried to sell the "
-                        + car.describe() + " on Raksio Buy & Sell" + where + ": " + who + ". The request shows where they said it is.");
+                if (!liveTracker) incidents.moveTo(car.getTheftIncidentId(), lat, lon);
+                incidents.tellAssignee(car.getTheftIncidentId(), CarGuardService.STOLEN_SEEN + ": someone tried to "
+                        + (sell ? "sell" : "trade in") + " the " + car.describe() + " on Raksio Buy & Sell" + where + ": " + person
+                        + ". The request shows where.");
             }
-            log.warn("Listing refused: plate {} is reported stolen (car {})", key, car.getId());
-            throw ApiException.badRequest(typed + " is reported stolen in Raksio, so it can't be sold here.");
+            log.warn("Refused ({}): plate {} is reported stolen (car {})", doing, key, car.getId());
+            throw ApiException.badRequest(typed + " is reported stolen in Raksio, so it can't be " + (sell ? "sold here." : "traded in."));
         }
     }
 
@@ -330,9 +358,15 @@ public class MarketService {
         MarketListing l = mine(seller, id);
         String s = oneOf(status, Set.of("ACTIVE", "RESERVED", "WITHDRAWN"), "Status: ACTIVE, RESERVED or WITHDRAWN.");
         if (!l.open()) throw ApiException.badRequest("It's " + l.getStatus().toLowerCase(Locale.ROOT) + ".");
+        if (s.equals("ACTIVE")) {
+            offers.findByListingIdOrderByCreatedAtDesc(l.getId()).stream().filter(o -> "ACCEPTED".equals(o.getStatus())).findFirst().ifPresent(o -> {
+                throw ApiException.badRequest("You accepted " + o.getBuyer().getName() + "'s offer - call that off first (Offers).");
+            });
+        }
         if (s.equals("WITHDRAWN")) {
             requireNoDrive(l);
             closeUpcoming(l, "the seller took it off sale");
+            closeOffers(l, null, "the seller took it off sale");
         }
         l.setStatus(s);
         changed(listings.save(l), null);
@@ -346,7 +380,13 @@ public class MarketService {
         if (!l.open()) throw ApiException.badRequest("It's " + l.getStatus().toLowerCase(Locale.ROOT) + ".");
         requireNoDrive(l);
         User buyer = null;
-        if (r != null && r.getBookingId() != null) {
+        MarketOffer deal = null;
+        if (r != null && r.getOfferId() != null) {
+            deal = offers.findById(r.getOfferId()).orElse(null);
+            if (deal == null || !deal.getListing().getId().equals(l.getId())) throw ApiException.notFound("Offer not found");
+            if (!"ACCEPTED".equals(deal.getStatus())) throw ApiException.badRequest("Accept the offer first.");
+            buyer = deal.getBuyer();
+        } else if (r != null && r.getBookingId() != null) {
             TestDriveBooking b = bookings.findById(r.getBookingId()).orElse(null);
             if (b == null || b.getListing() == null || !b.getListing().getId().equals(l.getId())) throw ApiException.notFound("Test drive not found");
             buyer = b.getBuyer();
@@ -359,9 +399,25 @@ public class MarketService {
         l.setStatus("SOLD");
         l.setSoldAt(now());
         l.setSoldTo(buyer);
-        l.setSoldPrice(r != null && r.getPrice() != null ? r.getPrice() : l.getPrice());
+        l.setSoldPrice(r != null && r.getPrice() != null ? r.getPrice()
+                : deal != null && !deal.exchange() && deal.getSellerValue() != null ? deal.getSellerValue() : l.getPrice());
         listings.save(l);
         closeUpcoming(l, "it has been sold");
+        if (deal != null) {
+            deal.setStatus("DONE");
+            offers.save(deal);
+            // The buyer's own listing of the vehicle they traded in comes off sale.
+            if (deal.exchange() && deal.getExListingId() != null) {
+                listings.findById(deal.getExListingId()).filter(MarketListing::open).ifPresent(x -> {
+                    for (TestDriveBooking b : bookings.findByListingIdOrderByMeetAtDesc(x.getId())) if (b.active()) finish(b, now());
+                    closeUpcoming(x, "it was exchanged");
+                    closeOffers(x, null, "it was exchanged");
+                    x.setStatus("WITHDRAWN");
+                    changed(listings.save(x), null);
+                });
+            }
+        }
+        closeOffers(l, deal, "it has been sold");
 
         boolean handed = false;
         if (buyer != null && l.getCarId() != null && r != null && Boolean.TRUE.equals(r.getHandOverTracker())) {
@@ -376,6 +432,7 @@ public class MarketService {
         Map<String, Object> m = detailFor(seller, l);
         m.put("handedOver", handed);
         m.put("soldTo", buyer != null ? buyer.getName() : null);
+        m.put("exchangeOffer", deal != null && deal.exchange() ? MarketOfferService.view(deal, seller) : null);
         return m;
     }
 
@@ -407,6 +464,18 @@ public class MarketService {
     private void requireNoDrive(MarketListing l) {
         boolean out = bookings.findByListingIdOrderByMeetAtDesc(l.getId()).stream().anyMatch(TestDriveBooking::active);
         if (out) throw ApiException.badRequest("A test drive is going on - end it first.");
+    }
+
+    /** Open and accepted offers (but the one it was sold on) are closed, and their buyers told why. */
+    private void closeOffers(MarketListing l, MarketOffer except, String why) {
+        for (MarketOffer o : offers.findByListingIdOrderByCreatedAtDesc(l.getId())) {
+            if (except != null && o.getId().equals(except.getId())) continue;
+            if (!o.open() && !"ACCEPTED".equals(o.getStatus())) continue;
+            o.setStatus("CLOSED");
+            offers.save(o);
+            alerts.raiseAboutMarket(o.getBuyer(), RiskLevel.LOW, MarketOfferService.OFFER + ": your offer for the " + l.title()
+                    + " is closed - " + why + ".", null, null, l.getId(), null);
+        }
     }
 
     /** Asked-for and agreed test drives are called off, and their buyers told why. */
@@ -490,7 +559,7 @@ public class MarketService {
     /** What a buyer can filter on. Missing = any. */
     public record Filters(Double lat, Double lng, Double radiusKm, String type, String q, Long minPrice, Long maxPrice,
                           String sellerType, String fuel, String transmission, Integer minYear, Integer maxKm,
-                          String condition, String sort, Integer offset) {
+                          String condition, String sort, Integer offset, Boolean exchange) {
     }
 
     public Map<String, Object> browse(User viewer, Filters f) {
@@ -500,14 +569,17 @@ public class MarketService {
             stolenCars.add(c.getId());
             if (c.getPlateKey() != null) stolenPlates.add(c.getPlateKey());
         }
-        boolean here = f.lat() != null && f.lng() != null && validPoint(f.lat(), f.lng());
-        double radiusM = f.radiusKm() == null ? 50_000 : f.radiusKm() <= 0 ? Double.MAX_VALUE : Math.min(f.radiusKm(), 1000) * 1000;
+        // Distances only when the buyer is in the area; otherwise the whole area, newest first.
+        boolean here = f.lat() != null && f.lng() != null && validPoint(f.lat(), f.lng()) && area.contains(f.lat(), f.lng());
+        double radiusM = f.radiusKm() == null || f.radiusKm() <= 0 ? Double.MAX_VALUE : Math.min(f.radiusKm(), 1000) * 1000;
         String q = f.q() == null ? null : f.q().trim().toLowerCase(Locale.ROOT);
         String[] words = q == null || q.isEmpty() ? new String[0] : q.split("\\s+");
 
         Predicate<MarketListing> keep = l -> {
             if (l.getPlateKey() != null && stolenPlates.contains(l.getPlateKey())) return false;
             if (l.getCarId() != null && stolenCars.contains(l.getCarId())) return false;
+            if (!area.contains(l.getLatitude(), l.getLongitude())) return false;
+            if (Boolean.TRUE.equals(f.exchange()) && !Boolean.TRUE.equals(l.getExchange())) return false;
             if (f.type() != null && !f.type().isBlank() && !f.type().equalsIgnoreCase(l.getVehicleType())) return false;
             if (f.sellerType() != null && !f.sellerType().isBlank()) {
                 // "Dealers" covers dealers and showrooms; "Owners" covers owners and people selling for family.
@@ -552,6 +624,8 @@ public class MarketService {
         m.put("total", found.size());
         m.put("offset", from);
         m.put("listings", page);
+        m.put("inArea", here || f.lat() == null);
+        m.put("area", area.view());
         return m;
     }
 
@@ -607,9 +681,22 @@ public class MarketService {
         m.put("stolen", stolen);
         m.put("reportedByMe", !mine && reports.existsByListingIdAndReporterId(l.getId(), viewer.getId()));
         m.put("myBooking", myBooking != null ? bookingView(myBooking, viewer) : null);
+        m.put("showOnRoad", mine ? l.getShowOnRoad() : null);
+        if (mine && l.getSoldTo() != null) m.put("soldTo", l.getSoldTo().getName());
+        List<MarketOffer> os = offers.findByListingIdOrderByCreatedAtDesc(l.getId());
         if (mine) {
             m.put("bookings", all.stream().limit(50).map(b -> bookingView(b, viewer)).toList());
             m.put("reportCount", l.getReportCount());
+            m.put("offers", os.stream().limit(50).map(o -> MarketOfferService.view(o, viewer)).toList());
+            m.put("reach", road.reach(l.getId()));
+        } else {
+            MarketOffer myOffer = os.stream().filter(o -> o.getBuyer().getId().equals(viewer.getId())).findFirst().orElse(null);
+            m.put("myOffer", myOffer != null ? MarketOfferService.view(myOffer, viewer) : null);
+            boolean dealForMe = myOffer != null && "ACCEPTED".equals(myOffer.getStatus());
+            // Reserved for this buyer (their offer was accepted): they can still come for a test drive.
+            m.put("canBook", Boolean.TRUE.equals(l.getTestDrives()) && ("ACTIVE".equals(l.getStatus()) || ("RESERVED".equals(l.getStatus()) && dealForMe)));
+            m.put("canOffer", "ACTIVE".equals(l.getStatus()) && (Boolean.TRUE.equals(l.getNegotiable()) || Boolean.TRUE.equals(l.getExchange()))
+                    && (myOffer == null || !(myOffer.open() || dealForMe)));
         }
         return m;
     }
@@ -635,6 +722,7 @@ public class MarketService {
         m.put("area", l.getArea());
         m.put("status", l.getStatus());
         m.put("testDrives", l.getTestDrives());
+        m.put("exchange", l.getExchange());
         m.put("papers", Map.of("rcInHand", l.getRcInHand(), "insuranceValid", l.getInsuranceValid(),
                 "serviceRecords", l.getServiceRecords(), "loanCleared", l.getLoanCleared()));
         m.put("plateChecked", l.getPlateKey() != null);
@@ -687,12 +775,30 @@ public class MarketService {
             c.put("waitingForYou", bs.stream().filter(b -> waitingFor(b).equals("SELLER")).count());
             c.put("upcoming", bs.stream().filter(b -> "ACCEPTED".equals(b.getStatus())).count());
             c.put("views", l.getViews());
+            List<MarketOffer> os = offers.findByListingIdOrderByCreatedAtDesc(l.getId());
+            c.put("offersWaiting", os.stream().filter(o -> "OPEN".equals(o.getStatus())).count());
+            c.put("offerAccepted", os.stream().anyMatch(o -> "ACCEPTED".equals(o.getStatus())));
+            if (l.open()) c.put("reach", road.reach(l.getId()));
             mineList.add(c);
         }
         m.put("listings", mineList);
+        // Offers: the ones I made, and the ones on my vehicles - waiting for me first, then the newest.
+        List<Map<String, Object>> ofs = new ArrayList<>();
+        offers.findByBuyerIdOrderByCreatedAtDesc(user.getId()).stream().limit(50).forEach(o -> ofs.add(MarketOfferService.view(o, user)));
+        for (MarketListing l : listings.findBySellerIdOrderByCreatedAtDesc(user.getId())) {
+            offers.findByListingIdOrderByCreatedAtDesc(l.getId()).stream().limit(20).forEach(o -> ofs.add(MarketOfferService.view(o, user)));
+        }
+        ofs.sort(Comparator.<Map<String, Object>, Boolean>comparing(o -> !waitingOn(o)).thenComparing(
+                o -> (LocalDateTime) (o.get("answeredAt") != null ? o.get("answeredAt") : o.get("createdAt")), Comparator.nullsLast(Comparator.reverseOrder())));
+        m.put("offers", ofs.size() > 80 ? ofs.subList(0, 80) : ofs);
         m.put("asBuyer", bookings.findByBuyerIdOrderByMeetAtDesc(user.getId()).stream().limit(50).map(b -> bookingView(b, user)).toList());
         m.put("asSeller", bookings.findBySellerIdOrderByMeetAtDesc(user.getId()).stream().limit(80).map(b -> bookingView(b, user)).toList());
         return m;
+    }
+
+    /** An offer the viewer has to answer. */
+    private static boolean waitingOn(Map<String, Object> o) {
+        return o.get("waitingFor") != null && o.get("waitingFor").equals(o.get("role"));
     }
 
     /** "Is this number stolen?" - for anyone about to buy, here or anywhere else. */
@@ -796,7 +902,10 @@ public class MarketService {
     public Map<String, Object> book(User buyer, Long listingId, BookingRequest r) {
         MarketListing l = listings.findById(listingId).orElseThrow(() -> ApiException.notFound("This vehicle isn't for sale any more."));
         if (l.getSeller().getId().equals(buyer.getId())) throw ApiException.badRequest("That's your own vehicle.");
-        if (!"ACTIVE".equals(l.getStatus())) {
+        // Reserved: only for the buyer whose offer was accepted (they come to see and drive it before paying).
+        boolean dealForMe = "RESERVED".equals(l.getStatus()) && offers.findByListingIdOrderByCreatedAtDesc(l.getId()).stream()
+                .anyMatch(o -> o.getBuyer().getId().equals(buyer.getId()) && "ACCEPTED".equals(o.getStatus()));
+        if (!"ACTIVE".equals(l.getStatus()) && !dealForMe) {
             throw ApiException.badRequest("RESERVED".equals(l.getStatus()) ? "It's reserved for another buyer." : "It isn't for sale any more.");
         }
         if (!Boolean.TRUE.equals(l.getTestDrives())) throw ApiException.badRequest("The seller isn't taking test drives for this one - call or message instead.");
@@ -1168,6 +1277,14 @@ public class MarketService {
     @Transactional
     public boolean carFix(Long carId, double lat, double lon, Double speed, LocalDateTime at, boolean fresh) {
         List<TestDriveBooking> active = bookings.findByCarIdAndStatus(carId, "ACTIVE");
+        // Not on a test drive: it's out on the road, maybe with its owner - people looking for one like it nearby hear it's for sale.
+        if (fresh && active.isEmpty()) {
+            try {
+                road.carMoved(carId, lat, lon, speed, at);
+            } catch (RuntimeException e) {
+                log.warn("For-sale-nearby check failed for car {}: {}", carId, e.getMessage());
+            }
+        }
         for (TestDriveBooking b : active) {
             // The tracker started sending during a drive the phones were following: it takes over (it's in the car for sure).
             if (!"TRACKER".equals(b.getTrackedBy()) && fresh) b.setTrackedBy("TRACKER");

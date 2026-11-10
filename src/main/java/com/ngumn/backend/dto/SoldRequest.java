@@ -15,6 +15,9 @@ import lombok.Data;
 public class SoldRequest {
     private Long bookingId;
 
+    /** Sold on an accepted offer (price, or with the buyer's vehicle in exchange). */
+    private Long offerId;
+
     @Size(max = 120)
     private String to;
 

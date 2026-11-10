@@ -18,6 +18,8 @@ import com.ngumn.backend.repository.VehicleRepository;
 import com.ngumn.backend.util.GeoUtil;
 import com.ngumn.backend.util.VehicleLabels;
 import com.ngumn.backend.websocket.NgumnWebSocketHandler;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -39,6 +41,8 @@ import java.util.stream.Collectors;
 @Service
 public class VehicleService {
 
+    private static final Logger log = LoggerFactory.getLogger(VehicleService.class);
+
     /** A position older than this isn't shown to anyone else any more. */
     public static final long LIVE_SECONDS = 10 * 60;
     /** Largest area the app can ask about at once. */
@@ -51,6 +55,7 @@ public class VehicleService {
     private final RiskEngineService riskEngineService;
     private final RuleMonitorService ruleMonitorService;
     private final HazardAheadService hazardAheadService;
+    private final MarketRoadService marketRoadService;
 
     public VehicleService(VehicleRepository vehicleRepository,
                            LocationLogRepository locationLogRepository,
@@ -58,7 +63,8 @@ public class VehicleService {
                            NgumnWebSocketHandler webSocketHandler,
                            RiskEngineService riskEngineService,
                            RuleMonitorService ruleMonitorService,
-                           HazardAheadService hazardAheadService) {
+                           HazardAheadService hazardAheadService,
+                           MarketRoadService marketRoadService) {
         this.vehicleRepository = vehicleRepository;
         this.locationLogRepository = locationLogRepository;
         this.userRepository = userRepository;
@@ -66,6 +72,7 @@ public class VehicleService {
         this.riskEngineService = riskEngineService;
         this.ruleMonitorService = ruleMonitorService;
         this.hazardAheadService = hazardAheadService;
+        this.marketRoadService = marketRoadService;
     }
 
     public VehicleResponse register(User owner, VehicleCreateRequest request) {
@@ -210,6 +217,14 @@ public class VehicleService {
 
         // "Pothole 300 m ahead" - reports on the road in front of you.
         hazardAheadService.check(vehicle);
+
+        // Buy & Sell on the road: "that Creta next to you is for sale", or the
+        // vehicle you're driving is the one you're selling.
+        try {
+            marketRoadService.vehicleMoved(vehicle);
+        } catch (RuntimeException e) {
+            log.warn("For-sale-nearby check failed for vehicle {}: {}", vehicle.getId(), e.getMessage());
+        }
 
         return response;
     }

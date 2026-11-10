@@ -132,6 +132,25 @@ public class MarketListing {
     @Builder.Default
     private Integer speedLimitKmh = 80;
 
+    /** Buyers may offer their own vehicle in exchange (MarketOfferService) - usual for dealers and showrooms. */
+    @Column(name = "takes_exchange")
+    @Builder.Default
+    private Boolean exchange = false;
+
+    /**
+     * While the seller drives it (their Raksio number plate is this one) or its
+     * Car guard tracker says it's moving, people looking for one like it who
+     * pass close by are told it's for sale (MarketRoadService).
+     */
+    @Builder.Default
+    private Boolean showOnRoad = true;
+
+    /** Where it was last seen moving on the road, and when (private: only used for "next to you"). */
+    private Double roadLatitude;
+    private Double roadLongitude;
+    private Double roadSpeedKmh;
+    private LocalDateTime roadAt;
+
     /** Up to 6 photo tokens, comma-separated, in order (the photos are in listing_photos). */
     @Column(length = 200)
     private String photoTokens;

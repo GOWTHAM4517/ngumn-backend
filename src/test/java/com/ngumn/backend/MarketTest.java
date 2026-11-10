@@ -37,6 +37,9 @@ class MarketTest {
     VehicleRepository vehicles;
     IncidentService incidents;
     MarketService market;
+    MarketArea area;
+    MarketRoadService road;
+    MarketOfferService offers;
     CarGuardService guard;
     User owner, dealer, showroom, buyer, buyer2, noPhone, police, admin, r1, r2;
 
@@ -51,9 +54,14 @@ class MarketTest {
         AuthorityForwarder forwarder = new AuthorityForwarder(new StandardEnvironment(), new NotifyGateway());
         incidents = new IncidentService(db.of(IncidentRepository.class), users, alerts, ws, vehicles, corridor, forwarder, e -> { });
         RewardService rewards = new RewardService(db.of(RewardRepository.class), users);
+        area = new MarketArea();
+        road = new MarketRoadService(db.of(MarketListingRepository.class), db.of(MarketWishRepository.class),
+                db.of(ListingSightingRepository.class), vehicles, alerts, area);
         market = new MarketService(db.of(MarketListingRepository.class), db.of(ListingPhotoRepository.class),
                 db.of(TestDriveBookingRepository.class), db.of(ListingReportRepository.class), db.of(GuardedCarRepository.class),
-                db.of(CarPositionRepository.class), db.of(CarSightingRepository.class), users, alerts, incidents, ws);
+                db.of(CarPositionRepository.class), db.of(CarSightingRepository.class), users, alerts, incidents, ws,
+                db.of(MarketOfferRepository.class), road, area);
+        offers = new MarketOfferService(db.of(MarketListingRepository.class), db.of(MarketOfferRepository.class), market, alerts, ws);
         guard = new CarGuardService(db.of(GuardedCarRepository.class), db.of(CarPositionRepository.class), market,
                 db.of(CarSightingRepository.class), db.of(ViolationComplaintRepository.class), vehicles, users, alerts, incidents, rewards, ws);
 
@@ -231,7 +239,7 @@ class MarketTest {
     }
 
     MarketService.Filters filters(String q) {
-        return new MarketService.Filters(BENZ_LAT, BENZ_LON, null, null, q, null, null, null, null, null, null, null, null, null, 0);
+        return new MarketService.Filters(BENZ_LAT, BENZ_LON, null, null, q, null, null, null, null, null, null, null, null, null, 0, null);
     }
 
     @Test
@@ -250,8 +258,14 @@ class MarketTest {
         bike.setLatitude(north(BENZ_LAT, 1000));
         market.create(buyer2, bike);
         ListingRequest far = swift("AP 16 AA 0004", 400_000);
-        far.setLatitude(north(BENZ_LAT, 80_000)); // Guntur-ish: outside the default 50 km
-        market.create(r1, far);
+        far.setLatitude(north(BENZ_LAT, 80_000)); // 80 km away: outside the Vijayawada area
+        ApiException outside = assertThrows(ApiException.class, () -> market.create(r1, far));
+        assertTrue(outside.getMessage().contains("Vijayawada area") && outside.getMessage().contains("40 km outside"), outside.getMessage());
+        ListingRequest guntur = swift("AP 16 AA 0004", 400_000);
+        guntur.setLatitude(16.3067);  // Guntur, ~31 km: inside
+        guntur.setLongitude(80.4365);
+        guntur.setArea("Brodipet, Guntur");
+        market.create(r1, guntur);
         ListingRequest creta = swift(null, 1_450_000);
         creta.setSellerType("SHOWROOM");
         creta.setBusinessName("Lakshmi Hyundai");
@@ -264,18 +278,24 @@ class MarketTest {
         assertEquals(0, newCreta.get("kmDriven"));
 
         Map<String, Object> all = market.browse(buyer, filters(null));
-        assertEquals(4, all.get("total"), "the far one is beyond 50 km");
+        assertEquals(5, all.get("total"), "the whole area, Guntur too");
+        assertEquals(true, all.get("inArea"));
+        assertEquals("Vijayawada area", ((Map<?, ?>) all.get("area")).get("name"));
+        assertEquals(4, market.browse(buyer, new MarketService.Filters(BENZ_LAT, BENZ_LON, 10.0, null, null, null, null, null, null, null, null, null, null, null, 0, null)).get("total"), "within 10 km");
+        Map<String, Object> fromHyderabad = market.browse(buyer, new MarketService.Filters(17.385, 78.4867, 10.0, null, null, null, null, null, null, null, null, null, null, null, 0, null));
+        assertEquals(false, fromHyderabad.get("inArea"));
+        assertEquals(5, fromHyderabad.get("total"), "outside the area: the whole area, no distances");
         List<Map<String, Object>> near = list(all);
         assertEquals(0.0, (double) near.get(0).get("distanceKm"), 0.05, "nearest first");
 
-        assertEquals(1, market.browse(buyer, new MarketService.Filters(BENZ_LAT, BENZ_LON, 0.0, "BIKE", null, null, null, null, null, null, null, null, null, null, 0)).get("total"));
-        assertEquals(2, market.browse(buyer, filters("swift")).get("total"));
+        assertEquals(1, market.browse(buyer, new MarketService.Filters(BENZ_LAT, BENZ_LON, 0.0, "BIKE", null, null, null, null, null, null, null, null, null, null, 0, null)).get("total"));
+        assertEquals(3, market.browse(buyer, filters("swift")).get("total"), "Guntur's too: the whole area");
         assertEquals(1, market.browse(buyer, filters("sai motors")).get("total"));
-        Map<String, Object> cheap = market.browse(buyer, new MarketService.Filters(null, null, null, "CAR", null, null, 500_000L, null, null, null, null, null, null, "PRICE_LOW", 0));
+        Map<String, Object> cheap = market.browse(buyer, new MarketService.Filters(null, null, null, "CAR", null, null, 500_000L, null, null, null, null, null, null, "PRICE_LOW", 0, null));
         assertEquals(List.of(400_000L, 450_000L), list(cheap).stream().map(x -> x.get("price")).toList(), "anywhere when no place is given");
-        assertEquals(2, market.browse(buyer, new MarketService.Filters(BENZ_LAT, BENZ_LON, null, null, null, null, null, "BUSINESS", null, null, null, null, null, null, 0)).get("total"));
-        assertEquals(1, market.browse(buyer, new MarketService.Filters(BENZ_LAT, BENZ_LON, null, null, null, null, null, null, null, null, null, null, "NEW", null, 0)).get("total"));
-        assertEquals(1, market.browse(buyer, new MarketService.Filters(BENZ_LAT, BENZ_LON, null, "CAR", null, null, null, null, null, null, 2020, null, "USED", null, 0)).get("total"));
+        assertEquals(2, market.browse(buyer, new MarketService.Filters(BENZ_LAT, BENZ_LON, null, null, null, null, null, "BUSINESS", null, null, null, null, null, null, 0, null)).get("total"));
+        assertEquals(1, market.browse(buyer, new MarketService.Filters(BENZ_LAT, BENZ_LON, null, null, null, null, null, null, null, null, null, null, "NEW", null, 0, null)).get("total"));
+        assertEquals(1, market.browse(buyer, new MarketService.Filters(BENZ_LAT, BENZ_LON, null, "CAR", null, null, null, null, null, null, 2020, null, "USED", null, 0, null)).get("total"));
 
         // Three similar Swifts (2019-2020) are for sale: the dealer's 5.2 lakh is on the high side of 4-4.5 lakh.
         Map<?, ?> guide = (Map<?, ?>) market.detail(buyer, (Long) dealerSwift.get("id")).get("priceGuide");

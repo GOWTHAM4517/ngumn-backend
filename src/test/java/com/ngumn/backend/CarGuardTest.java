@@ -36,6 +36,9 @@ class CarGuardTest {
     IncidentService incidents;
     CarGuardService guard;
     MarketService market;
+    MarketArea area;
+    MarketRoadService road;
+    MarketOfferService offers;
     User showroom, ravi, farAway, police, admin, buyer;
 
     @BeforeEach
@@ -49,9 +52,14 @@ class CarGuardTest {
         AuthorityForwarder forwarder = new AuthorityForwarder(new StandardEnvironment(), new NotifyGateway());
         incidents = new IncidentService(db.of(IncidentRepository.class), users, alerts, ws, vehicles, corridor, forwarder, e -> { });
         RewardService rewards = new RewardService(db.of(RewardRepository.class), users);
+        area = new MarketArea();
+        road = new MarketRoadService(db.of(MarketListingRepository.class), db.of(MarketWishRepository.class),
+                db.of(ListingSightingRepository.class), vehicles, alerts, area);
         market = new MarketService(db.of(MarketListingRepository.class), db.of(ListingPhotoRepository.class),
                 db.of(TestDriveBookingRepository.class), db.of(ListingReportRepository.class), db.of(GuardedCarRepository.class),
-                db.of(CarPositionRepository.class), db.of(CarSightingRepository.class), users, alerts, incidents, ws);
+                db.of(CarPositionRepository.class), db.of(CarSightingRepository.class), users, alerts, incidents, ws,
+                db.of(MarketOfferRepository.class), road, area);
+        offers = new MarketOfferService(db.of(MarketListingRepository.class), db.of(MarketOfferRepository.class), market, alerts, ws);
         guard = new CarGuardService(db.of(GuardedCarRepository.class), db.of(CarPositionRepository.class),
                 market, db.of(CarSightingRepository.class), db.of(ViolationComplaintRepository.class),
                 vehicles, users, alerts, incidents, rewards, ws);

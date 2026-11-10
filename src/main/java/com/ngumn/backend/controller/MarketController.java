@@ -3,6 +3,9 @@ package com.ngumn.backend.controller;
 import com.ngumn.backend.dto.*;
 import com.ngumn.backend.entity.ListingPhoto;
 import com.ngumn.backend.service.AuthService;
+import com.ngumn.backend.service.MarketArea;
+import com.ngumn.backend.service.MarketOfferService;
+import com.ngumn.backend.service.MarketRoadService;
 import com.ngumn.backend.service.MarketService;
 import jakarta.validation.Valid;
 import org.springframework.http.CacheControl;
@@ -18,8 +21,9 @@ import java.util.Map;
  * Buy &amp; Sell (see MarketService).
  *
  * <pre>
+ * GET    /api/market/area                       where Buy &amp; Sell works (the city and the towns around it)
  * GET    /api/market/listings?lat=&lng=&radiusKm=&type=&q=&minPrice=&maxPrice=&sellerType=&fuel=
- *                             &transmission=&minYear=&maxKm=&condition=&sort=&offset=   vehicles for sale
+ *                             &transmission=&minYear=&maxKm=&condition=&sort=&offset=&exchange=   vehicles for sale
  * POST   /api/market/listings                   put one up for sale
  * GET    /api/market/listings/{id}              one (its seller also gets the test-drive requests)
  * PATCH  /api/market/listings/{id}              change it
@@ -30,6 +34,14 @@ import java.util.Map;
  * POST   /api/market/listings/{id}/report       fake / scam / stolen...
  * POST   /api/market/listings/{id}/bookings     buyer: ask for a test drive
  * POST   /api/market/listings/{id}/walk-in      seller: a walk-in customer's test drive, starting now
+ * POST   /api/market/listings/{id}/offers       buyer: a price, or their vehicle in exchange
+ * POST   /api/market/offers/{id}/accept | counter | decline     seller   {value?, note?}
+ * POST   /api/market/offers/{id}/agree | withdraw               buyer
+ * POST   /api/market/offers/{id}/to-stock       dealer/showroom: put the vehicle taken in exchange up for sale {value?}
+ * GET    /api/market/wishes                     "Looking for" (what I'm looking for)
+ * POST   /api/market/wishes                     look for something  {vehicleType, q, maxPrice, ... onRoad, newListings}
+ * PATCH  /api/market/wishes/{id}                change it / pause it  {active}
+ * DELETE /api/market/wishes/{id}
  * GET    /api/market/mine                       my vehicles, my test drives (buyer and seller)
  * GET    /api/market/check?plate=               is this number reported stolen?
  * GET    /api/market/photo/{token}              public: a photo
@@ -43,11 +55,23 @@ import java.util.Map;
 public class MarketController {
 
     private final MarketService market;
+    private final MarketOfferService offers;
+    private final MarketRoadService road;
+    private final MarketArea area;
     private final AuthService authService;
 
-    public MarketController(MarketService market, AuthService authService) {
+    public MarketController(MarketService market, MarketOfferService offers, MarketRoadService road, MarketArea area, AuthService authService) {
         this.market = market;
+        this.offers = offers;
+        this.road = road;
+        this.area = area;
         this.authService = authService;
+    }
+
+    @GetMapping("/api/market/area")
+    public ResponseEntity<Map<String, Object>> area(@RequestHeader("Authorization") String authorization) {
+        authService.requireUser(authorization);
+        return ResponseEntity.ok(area.view());
     }
 
     @GetMapping("/api/market/listings")
@@ -59,9 +83,9 @@ public class MarketController {
                                                       @RequestParam(required = false) String fuel, @RequestParam(required = false) String transmission,
                                                       @RequestParam(required = false) Integer minYear, @RequestParam(required = false) Integer maxKm,
                                                       @RequestParam(required = false) String condition, @RequestParam(required = false) String sort,
-                                                      @RequestParam(required = false) Integer offset) {
+                                                      @RequestParam(required = false) Integer offset, @RequestParam(required = false) Boolean exchange) {
         return ResponseEntity.ok(market.browse(authService.requireUser(authorization), new MarketService.Filters(lat, lng, radiusKm, type, q,
-                minPrice, maxPrice, sellerType, fuel, transmission, minYear, maxKm, condition, sort, offset)));
+                minPrice, maxPrice, sellerType, fuel, transmission, minYear, maxKm, condition, sort, offset, exchange)));
     }
 
     @PostMapping("/api/market/listings")
@@ -120,6 +144,46 @@ public class MarketController {
     public ResponseEntity<Map<String, Object>> walkIn(@RequestHeader("Authorization") String authorization, @PathVariable Long id,
                                                       @Valid @RequestBody BookingRequest r) {
         return ResponseEntity.ok(market.walkIn(authService.requireUser(authorization), id, r));
+    }
+
+    @PostMapping("/api/market/listings/{id}/offers")
+    public ResponseEntity<Map<String, Object>> offer(@RequestHeader("Authorization") String authorization, @PathVariable Long id,
+                                                     @Valid @RequestBody OfferRequest r) {
+        return ResponseEntity.ok(offers.make(authService.requireUser(authorization), id, r));
+    }
+
+    @PostMapping("/api/market/offers/{id}/{action}")
+    public ResponseEntity<Map<String, Object>> offerAct(@RequestHeader("Authorization") String authorization, @PathVariable Long id,
+                                                        @PathVariable String action, @Valid @RequestBody(required = false) OfferRequest r) {
+        var user = authService.requireUser(authorization);
+        return ResponseEntity.ok(switch (action) {
+            case "accept", "counter", "decline" -> offers.answer(user, id, action, r);
+            case "agree", "withdraw" -> offers.buyerAct(user, id, action);
+            case "to-stock" -> offers.toStock(user, id, r);
+            default -> throw com.ngumn.backend.exception.ApiException.notFound("Unknown action");
+        });
+    }
+
+    @GetMapping("/api/market/wishes")
+    public ResponseEntity<List<Map<String, Object>>> wishes(@RequestHeader("Authorization") String authorization) {
+        return ResponseEntity.ok(road.myWishes(authService.requireUser(authorization)));
+    }
+
+    @PostMapping("/api/market/wishes")
+    public ResponseEntity<Map<String, Object>> addWish(@RequestHeader("Authorization") String authorization, @Valid @RequestBody WishRequest r) {
+        return ResponseEntity.ok(road.addWish(authService.requireUser(authorization), r));
+    }
+
+    @PatchMapping("/api/market/wishes/{id}")
+    public ResponseEntity<Map<String, Object>> updateWish(@RequestHeader("Authorization") String authorization, @PathVariable Long id,
+                                                          @Valid @RequestBody WishRequest r) {
+        return ResponseEntity.ok(road.updateWish(authService.requireUser(authorization), id, r));
+    }
+
+    @DeleteMapping("/api/market/wishes/{id}")
+    public ResponseEntity<Map<String, Object>> deleteWish(@RequestHeader("Authorization") String authorization, @PathVariable Long id) {
+        road.deleteWish(authService.requireUser(authorization), id);
+        return ResponseEntity.ok(Map.of("deleted", true));
     }
 
     @GetMapping("/api/market/mine")

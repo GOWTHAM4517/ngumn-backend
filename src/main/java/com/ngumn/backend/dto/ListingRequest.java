@@ -84,6 +84,12 @@ public class ListingRequest {
 
     private Boolean testDrives;
 
+    /** Takes the buyer's vehicle in exchange. */
+    private Boolean exchange;
+
+    /** Tell nearby people looking for one while I drive it. */
+    private Boolean showOnRoad;
+
     @Min(10)
     @Max(120)
     private Integer driveMinutes;
