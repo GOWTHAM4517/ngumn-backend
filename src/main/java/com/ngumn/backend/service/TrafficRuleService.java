@@ -245,7 +245,7 @@ public class TrafficRuleService {
 
         if (alertDriver && saved.getVehicle() != null) {
             alertService.raise(saved.getVehicle(), saved.getDriver(), alertTypeFor(saved.getType()), riskFor(saved),
-                    (simulated ? "Test drive - " : "") + saved.getMessage(),
+                    saved.getMessage(),
                     saved.getLatitude(), saved.getLongitude());
         }
         return response;
@@ -260,10 +260,11 @@ public class TrafficRuleService {
      */
     public ViolationResponse reportFromDevice(User driver, Vehicle vehicle, ViolationRequest request) {
         checkCoordinates(request.getLatitude(), request.getLongitude());
-        boolean simulated = Boolean.TRUE.equals(request.getSimulated());
+        // Test Drive is gone: nothing reported from a phone is a test any more.
+        boolean simulated = false;
         ViolationType type = request.getType();
 
-        if (!simulated && type != ViolationType.OVERLOAD) {
+        if (type != ViolationType.OVERLOAD) {
             throw ApiException.badRequest("Speed, one-way and no-entry violations are detected automatically from "
                     + "live location - only overloading is reported from the phone");
         }

@@ -28,7 +28,6 @@ How the server reads and saves each table. One file per table.
 | `RiskAnalysisRepository.java` | Reads and saves RiskAnalysis rows in the database. |
 | `RoadReportRepository.java` | Reads and saves RoadReport rows in the database. |
 | `RoadSpeedLimitRepository.java` | Reads and saves RoadSpeedLimit rows in the database. |
-| `RsuNodeRepository.java` | Reads and saves RsuNode rows in the database. |
 | `SosDeliveryRepository.java` | Reads and saves SosDelivery rows in the database. |
 | `SosEventRepository.java` | Reads and saves SosEvent rows in the database. |
 | `TestDriveBookingRepository.java` | Reads and saves TestDriveBooking rows in the database. |

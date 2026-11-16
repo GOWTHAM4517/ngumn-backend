@@ -57,10 +57,8 @@ public class AlertService {
         AlertResponse response = AlertResponse.from(alert);
         webSocketHandler.broadcast("ALERT", response);
 
-        // Published as an event (not a direct call) so this service does not
-        // need a compile-time dependency on MqttService - that would create
-        // a circular bean dependency (AlertService -> MqttService ->
-        // VehicleService -> RiskEngineService -> AlertService).
+        // Also published as an application event, for any listener that wants
+        // every vehicle alert (none needs it today).
         if (vehicle != null) {
             eventPublisher.publishEvent(new AlertRaisedEvent(vehicle.getVehicleCode(), response));
         }

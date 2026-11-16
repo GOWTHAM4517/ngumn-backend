@@ -24,7 +24,6 @@ Every address the app or website calls, like /api/incidents. A controller checks
 | `ResponderAdminController.java` | Admin dashboard > Responders |
 | `RewardController.java` | API addresses for Reward. |
 | `RoadReportController.java` | API addresses for RoadReport. |
-| `RsuController.java` | Simulated Roadside Unit (RSU) nodes. |
 | `RuleZoneController.java` | Place-based traffic rules |
 | `SosController.java` | Crash alerts and SOS (see SosService). |
 | `VehicleController.java` | API addresses for Vehicle. |

@@ -19,13 +19,16 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 /**
- * Prototype risk-analysis engine.
+ * Risk score for each vehicle on every location update.
  *
- * This is a transparent, rule-based scoring model - NOT a trained ML
- * model - built from configurable weights so its behaviour can be
- * explained and tuned live in a viva. The weights/thresholds below are
- * demo parameters (see application.properties), not scientifically
- * validated real-world thresholds.
+ * A transparent, rule-based score (the learned models are in the ml
+ * package): over the real limit of the road (RoadDataService - posted or
+ * legal, or an authority zone), vehicles close by, an emergency vehicle
+ * nearby, hazards ahead. Weights and thresholds are set in
+ * application.properties so they can be explained and tuned.
+ *
+ * Over-speeding itself is recorded and told to the driver by the rule
+ * monitor (RuleMonitorService); here it only adds to the risk score.
  *
  * A vehicle is scored on every location update (every few seconds), so
  * each kind of alert is raised at most once every 3 minutes per vehicle -
@@ -34,7 +37,6 @@ import java.util.stream.Collectors;
 @Service
 public class RiskEngineService {
 
-    private static final int DEFAULT_SPEED_LIMIT_KMH = 60;
     private static final long ALERT_REPEAT_MS = 3 * 60_000;
     /** Only vehicles seen in the last 3 minutes count as "nearby". */
     private static final long LIVE_SECONDS = 180;
@@ -50,8 +52,6 @@ public class RiskEngineService {
     @Value("${ngumn.risk.nearby-radius-meters:300}")
     private double nearbyRadiusMeters;
 
-    @Value("${ngumn.risk.overspeed-margin-kmh:10}")
-    private double overspeedMarginKmh;
 
     @Value("${ngumn.risk.high-risk-score:70}")
     private int highRiskScore;
@@ -80,10 +80,12 @@ public class RiskEngineService {
         int score = 0;
 
         // --- 1. Overspeed factor -------------------------------------
-        int speedLimit = resolveSpeedLimit(vehicle.getCurrentLatitude(), vehicle.getCurrentLongitude());
+        Integer speedLimit = resolveSpeedLimit(vehicle);
         double speed = vehicle.getSpeedKmh() != null ? vehicle.getSpeedKmh() : 0;
         // Speed limits are for motor vehicles - not people walking or cycling.
-        boolean overspeed = vehicle.effectiveTravelMode().motorised() && speed > speedLimit + overspeedMarginKmh;
+        // Over the road's real limit + 5% (null = limit unknown: roads not loaded yet).
+        boolean overspeed = speedLimit != null && vehicle.effectiveTravelMode().motorised()
+                && speed > com.ngumn.backend.roads.SpeedLimitLaw.threshold(speedLimit);
         if (overspeed) {
             int add = 35;
             score += add;
@@ -140,7 +142,7 @@ public class RiskEngineService {
         analysis = riskAnalysisRepository.save(analysis);
 
         boolean emergencyNearby = nearby.stream().anyMatch(v -> Boolean.TRUE.equals(v.getEmergencyStatus()));
-        raiseAlertsIfNeeded(vehicle, level, overspeed, speed, speedLimit, nearby.size(), emergencyNearby, hazardCount);
+        raiseAlertsIfNeeded(vehicle, level, overspeed, nearby.size(), emergencyNearby, hazardCount);
 
         return analysis;
     }
@@ -150,17 +152,12 @@ public class RiskEngineService {
      * more specific warning ("Pothole 300 m ahead") from HazardAheadService,
      * so they only add to the score here.
      */
-    private void raiseAlertsIfNeeded(Vehicle vehicle, RiskLevel level, boolean overspeed, double speed, int speedLimit,
+    private void raiseAlertsIfNeeded(Vehicle vehicle, RiskLevel level, boolean overspeed,
                                       int nearbyCount, boolean emergencyNearby, long hazardCount) {
         if (level == RiskLevel.LOW) {
             return;
         }
-        if (overspeed && due(vehicle, AlertType.OVERSPEED)) {
-            alertService.raise(vehicle, vehicle.getOwner(), AlertType.OVERSPEED, level,
-                    String.format(Locale.ROOT, "You're doing %d km/h where the limit is %d km/h. Slow down.",
-                            Math.round(speed), speedLimit),
-                    vehicle.getCurrentLatitude(), vehicle.getCurrentLongitude());
-        }
+        // Over-speeding is told to the driver once, by the rule monitor, with the road's name and limit.
         if (level == RiskLevel.HIGH && due(vehicle, AlertType.HIGH_RISK)) {
             alertService.raise(vehicle, vehicle.getOwner(), AlertType.HIGH_RISK, level,
                     highRiskMessage(vehicle.effectiveTravelMode(), overspeed, nearbyCount, emergencyNearby, hazardCount),
@@ -217,11 +214,25 @@ public class RiskEngineService {
                 .collect(Collectors.toList());
     }
 
-    private int resolveSpeedLimit(double lat, double lon) {
-        return roadSpeedLimitRepository.findAll().stream()
+    private com.ngumn.backend.roads.RoadDataService roadDataService;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setRoadDataService(com.ngumn.backend.roads.RoadDataService roadDataService) {
+        this.roadDataService = roadDataService;
+    }
+
+    /** The real limit where the vehicle is: an authority zone, else the road's own; null when not known. */
+    private Integer resolveSpeedLimit(Vehicle v) {
+        double lat = v.getCurrentLatitude();
+        double lon = v.getCurrentLongitude();
+        Integer zone = roadSpeedLimitRepository.findAll().stream()
                 .filter(l -> GeoUtil.distanceMeters(lat, lon, l.getLatitude(), l.getLongitude()) <= l.getRadiusMeters())
                 .findFirst()
                 .map(RoadSpeedLimit::getSpeedLimitKmh)
-                .orElse(DEFAULT_SPEED_LIMIT_KMH);
+                .orElse(null);
+        if (zone != null) return zone;
+        if (roadDataService == null || !roadDataService.loaded()) return null;
+        return roadDataService.roadAt(lat, lon, v.getDirectionDegrees(), v.getSpeedKmh() == null ? 0 : v.getSpeedKmh(),
+                null, v.effectiveTravelMode()).getLimitKmh();
     }
 }

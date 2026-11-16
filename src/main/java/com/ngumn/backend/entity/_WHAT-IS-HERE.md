@@ -39,7 +39,6 @@ One file = one table in the database (users, vehicles, reports, alerts...).
 | `RoadReport.java` | Database table: road_reports. |
 | `RoadSpeedLimit.java` | Prototype configurable speed-limit dataset. |
 | `Role.java` | A fixed list of choices: DRIVER, PEDESTRIAN, EMERGENCY... |
-| `RsuNode.java` | Simulated Roadside Unit (RSU). |
 | `RuleZoneType.java` | Place-based traffic rules (besides speed limits, which live in RoadSpeedLimit). |
 | `SosDelivery.java` | Database table: sos_deliveries. |
 | `SosEvent.java` | Database table: sos_events. |
