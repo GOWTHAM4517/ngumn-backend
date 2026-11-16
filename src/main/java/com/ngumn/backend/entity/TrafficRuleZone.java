@@ -22,9 +22,10 @@ import java.time.LocalDateTime;
  * comma-separated VehicleType names (e.g. "TRUCK,BUS" for a heavy-vehicle
  * ban). Empty means the rule applies to every vehicle.
  *
- * Speed limits stay in RoadSpeedLimit (the risk engine uses that table
- * too). Like it, this is prototype data an admin adds for demos - it is
- * not an official road database.
+ * Speed zones stay in RoadSpeedLimit. Both are places the admin / traffic
+ * police set by hand for a real reason (a school, road works, a festival
+ * diversion); they come on top of the real road network from OpenStreetMap
+ * (RoadDataService), which gives every road its own limit and one-way rule.
  */
 @Entity
 @Table(name = "traffic_rule_zones")

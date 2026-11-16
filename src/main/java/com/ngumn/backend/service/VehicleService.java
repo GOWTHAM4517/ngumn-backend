@@ -181,6 +181,13 @@ public class VehicleService {
         return vehicle;
     }
 
+    private com.ngumn.backend.ml.TrafficSpeedModel trafficSpeedModel;
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setTrafficSpeedModel(com.ngumn.backend.ml.TrafficSpeedModel trafficSpeedModel) {
+        this.trafficSpeedModel = trafficSpeedModel;
+    }
+
     public VehicleResponse updateLocation(Vehicle vehicle, LocationUpdateRequest request) {
         // Where the vehicle was before this update - the rule monitor uses
         // it to work out the real direction of travel.
@@ -213,7 +220,17 @@ public class VehicleService {
 
         // Automatic traffic-rule checks (speed zones, one-way roads,
         // no-entry zones) - see RuleMonitorService.
-        ruleMonitorService.check(vehicle, request, prevLat, prevLng, prevTime);
+        response.setRoad(ruleMonitorService.check(vehicle, request, prevLat, prevLng, prevTime));
+
+        // The traffic model learns this road's normal speed for this hour (ml.TrafficSpeedModel).
+        if (trafficSpeedModel != null && response.getRoad() != null) {
+            try {
+                trafficSpeedModel.observe(vehicle, response.getRoad(),
+                        vehicle.getSpeedKmh() != null ? vehicle.getSpeedKmh() : 0, LocalDateTime.now(), System.currentTimeMillis());
+            } catch (RuntimeException e) {
+                log.warn("Traffic model skipped an update: {}", e.getMessage());
+            }
+        }
 
         // "Pothole 300 m ahead" - reports on the road in front of you.
         hazardAheadService.check(vehicle);

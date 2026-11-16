@@ -13,7 +13,6 @@ The brain. Risk score, alerts, crash/SOS, complaints, escalation, Buy & Sell - a
 | `CommunityService.java` | Community trust - road users check each other's reports with likes and dislikes, no admin needed. |
 | `ComplaintFilingService.java` | Files complaints - and requests for help - with the real authorities, through their official channels (AuthorityChannel), not only with the department teams inside Raksio |
 | `ContactService.java` | Emergency contacts (at least 3, at most 5) and the person's own phone number, plus asking to become a responder. |
-| `DemoSimulatorService.java` | DEMO MODE --------- Simulates multiple moving vehicles, hazards and an emergency-vehicle scenario entirely in software, so the full Raksio flow can be shown without... |
 | `EmergencyService.java` | "Green Corridor" priority-route module. |
 | `EscalationService.java` | Every minute: raises help requests nobody has accepted and complaints that are missing their deadline (IncidentService.escalateDue), and closes crash / SOS alerts... |
 | `HazardAheadService.java` | People hear about a hazard when they're about to reach it - not about everything reported around them. |

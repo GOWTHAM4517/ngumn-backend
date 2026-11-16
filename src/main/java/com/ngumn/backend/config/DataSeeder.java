@@ -16,10 +16,9 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.stereotype.Component;
 
 /**
- * Seeds a default admin login plus demo traffic-rule zones (two speed
- * zones, a one-way street and a no-entry area) in the Demo Mode area, so
- * the app is immediately usable after a fresh `mvn spring-boot:run`,
- * without needing manual SQL. Safe to run repeatedly (checks existence
+ * Seeds the admin login on a fresh database. Nothing else: road rules come
+ * from OpenStreetMap (RoadDataService) and speed / no-entry zones are added
+ * by the admin for real places. Safe to run repeatedly (checks existence
  * first).
  *
  * Default admin login (CHANGE via ADMIN_SEED_EMAIL / ADMIN_SEED_PASSWORD
@@ -92,39 +91,7 @@ public class DataSeeder implements CommandLineRunner {
             log.warn("Admin account '{}' is using the default password. Set ADMIN_SEED_PASSWORD before exposing this " +
                     "server on the public internet.", adminEmail);
         }
-
-        if (roadSpeedLimitRepository.count() == 0) {
-            roadSpeedLimitRepository.save(RoadSpeedLimit.builder()
-                    .roadName("Demo Zone A (default)")
-                    .latitude(17.3850).longitude(78.4867)
-                    .speedLimitKmh(50).radiusMeters(2000.0).build());
-            roadSpeedLimitRepository.save(RoadSpeedLimit.builder()
-                    .roadName("Demo Zone B - school zone (lower limit)")
-                    .latitude(17.3900).longitude(78.4900)
-                    .speedLimitKmh(30).radiusMeters(400.0).build());
-        }
-
-        // Demo one-way street and no-entry area in the Demo Mode area
-        // (Hyderabad). Add real ones near you from the app: Road rules >
-        // Rule zones (admin account).
-        if (!trafficRuleZoneRepository.existsByName("Demo one-way street (eastbound)")) {
-            trafficRuleZoneRepository.save(TrafficRuleZone.builder()
-                    .name("Demo one-way street (eastbound)")
-                    .zoneType(RuleZoneType.ONE_WAY)
-                    .latitude(17.3868).longitude(78.4815)
-                    .endLatitude(17.3868).endLongitude(78.4885)
-                    .radiusMeters(25.0)
-                    .active(true)
-                    .build());
-        }
-        if (!trafficRuleZoneRepository.existsByName("Demo no-entry zone (market street)")) {
-            trafficRuleZoneRepository.save(TrafficRuleZone.builder()
-                    .name("Demo no-entry zone (market street)")
-                    .zoneType(RuleZoneType.NO_ENTRY)
-                    .latitude(17.3829).longitude(78.4892)
-                    .radiusMeters(120.0)
-                    .active(true)
-                    .build());
-        }
+        // Speed limits and one-way roads now come from the real map (RoadDataService);
+        // nothing else is seeded.
     }
 }

@@ -7,6 +7,9 @@ import com.ngumn.backend.entity.Vehicle;
 import com.ngumn.backend.entity.VehicleType;
 import com.ngumn.backend.entity.ViolationSource;
 import com.ngumn.backend.entity.ViolationType;
+import com.ngumn.backend.roads.RoadDataService;
+import com.ngumn.backend.roads.RoadInfo;
+import com.ngumn.backend.roads.SpeedLimitLaw;
 import com.ngumn.backend.util.GeoUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,15 +48,20 @@ import java.util.concurrent.ConcurrentHashMap;
  * approaching"), a calmer note for the rest of the people within their
  * chosen radius ("Rule broken nearby ...").
  *
- * Speed limits only apply inside mapped zones - elsewhere the app's Drive
- * Guard gives reminders but nothing is recorded, because the real limit
- * isn't known. Outside zones, a vehicle going faster than
- * ngumn.rules.nearby-warning-speed-kmh (default 80) still triggers the
- * warning to drivers nearby, without a violation. Erratic driving is
+ * Real roads (RoadDataService, from OpenStreetMap): outside the admin's
+ * zones, the limit is the road's own - its posted limit on the map, or the
+ * legal limit for the vehicle class and road type from MoRTH S.O. 1522(E)
+ * (car 70 / bike, bus, lorry 60 / auto 50 in the city; car 100 on a 4-lane
+ * divided road). Over-speeding counts above the limit + 5% (the
+ * notification's own tolerance, at least 3 km/h for GPS error); people
+ * around are warned once a vehicle is clearly dangerous (20% / 10 km/h
+ * over). Wrong-way driving is checked against every real one-way road (see
+ * RoadRules for how a fix next to the other carriageway is ruled out). Only
+ * when the region's roads couldn't be loaded at all does the old rule
+ * apply: warn people nearby about anything at 80 km/h or more, record
+ * nothing. Erratic driving is
  * never recorded either (GPS speed alone can't prove it) - the driver
- * gets a caution and drivers nearby a warning. Demo Mode vehicles wander
- * randomly, so only their speed is checked, and they never cause warnings
- * to real drivers. Emergency vehicles on an active emergency run are
+ * gets a caution and drivers nearby a warning. Emergency vehicles on an active emergency run are
  * exempt, and so is anyone travelling on foot (travel mode WALK).
  */
 @Service
@@ -90,9 +98,13 @@ public class RuleMonitorService {
     @Value("${ngumn.rules.nearby-warning-speed-kmh:80}")
     private double nearbyWarningSpeedKmh;
 
-    public RuleMonitorService(TrafficRuleService trafficRuleService, NearbyDangerService nearbyDangerService) {
+    private final RoadDataService roadDataService;
+
+    public RuleMonitorService(TrafficRuleService trafficRuleService, NearbyDangerService nearbyDangerService,
+                              RoadDataService roadDataService) {
         this.trafficRuleService = trafficRuleService;
         this.nearbyDangerService = nearbyDangerService;
+        this.roadDataService = roadDataService;
     }
 
     /**
@@ -100,33 +112,36 @@ public class RuleMonitorService {
      * vehicle was before this update - used to work out its real direction
      * of travel (and speed, if the phone didn't report one).
      */
-    public void check(Vehicle vehicle, LocationUpdateRequest update,
-                      Double prevLat, Double prevLng, LocalDateTime prevTime) {
+    public RoadInfo check(Vehicle vehicle, LocationUpdateRequest update,
+                          Double prevLat, Double prevLng, LocalDateTime prevTime) {
         try {
-            inspect(vehicle, update, prevLat, prevLng, prevTime);
+            return inspect(vehicle, update, prevLat, prevLng, prevTime);
         } catch (RuntimeException e) {
             // A rule check must never break a location update.
             log.warn("Rule monitor skipped vehicle {}: {}", vehicle.getId(), e.getMessage());
+            return null;
         }
     }
 
-    private void inspect(Vehicle vehicle, LocationUpdateRequest update,
-                         Double prevLat, Double prevLng, LocalDateTime prevTime) {
+    /** Returns the road the vehicle is on (for the app), or null. */
+    private RoadInfo inspect(Vehicle vehicle, LocationUpdateRequest update,
+                             Double prevLat, Double prevLng, LocalDateTime prevTime) {
         Double lat = vehicle.getCurrentLatitude();
         Double lng = vehicle.getCurrentLongitude();
         if (lat == null || lng == null || vehicle.getOwner() == null) {
-            return;
+            return null;
         }
         Long vid = vehicle.getId();
         if (vehicle.getVehicleType() == VehicleType.EMERGENCY && Boolean.TRUE.equals(vehicle.getEmergencyStatus())) {
             clear(vid);
-            return;
+            return null;
         }
         // Someone on foot isn't bound by speed limits, one-way roads or
         // no-entry zones for vehicles.
         if (vehicle.effectiveTravelMode().onFoot()) {
             clear(vid);
-            return;
+            return roadDataService == null ? null
+                    : roadDataService.roadAt(lat, lng, null, 0, update.getAccuracyMeters(), vehicle.effectiveTravelMode());
         }
         boolean simulated = Boolean.TRUE.equals(vehicle.getIsSimulated());
         long now = System.currentTimeMillis();
@@ -148,6 +163,8 @@ public class RuleMonitorService {
         }
 
         List<RuleZoneResponse> zones = trafficRuleService.activeZones();
+        RoadInfo road = roadDataService == null ? null
+                : roadDataService.roadAt(lat, lng, heading, speed, update.getAccuracyMeters(), vehicle.effectiveTravelMode());
 
         // 1. Over-speeding in a mapped speed zone (the most specific zone wins).
         RuleZoneResponse speedZone = null;
@@ -173,15 +190,47 @@ public class RuleMonitorService {
                     .build(), !simulated);
             nearbyDangerService.warnAboutViolation(vehicle, ViolationType.OVERSPEED, speed, heading);
         }
-        // Very fast outside every mapped zone: not a recorded violation (the
-        // real limit isn't known), but the drivers around it are warned.
-        boolean veryFast = !simulated && speedZone == null && speed >= nearbyWarningSpeedKmh;
+        if (speedZone != null && road != null) {
+            // The admin's zone wins over the road's own limit - show that one.
+            road.setLimitKmh(speedZone.getSpeedLimitKmh());
+            road.setLimitSource("ZONE");
+            road.setLimitNote("Speed zone set by the traffic authority: " + speedZone.getName());
+            road.setOverAtKmh(Math.round((speedZone.getSpeedLimitKmh() + toleranceKmh) * 10) / 10.0);
+        }
+
+        // 1b. Over-speeding on a real road (its posted limit, or the legal one).
+        boolean roadsKnown = roadDataService != null && roadDataService.loaded();
+        Integer roadLimit = road != null && speedZone == null && roadsKnown ? road.getLimitKmh() : null;
+        boolean overRoad = !simulated && roadLimit != null && speed > SpeedLimitLaw.threshold(roadLimit);
+        if (sustained(vid + ":roadspeed", overRoad, now) && roadLimit != null) {
+            trafficRuleService.record(TrafficViolation.builder()
+                    .vehicle(vehicle)
+                    .driver(vehicle.getOwner())
+                    .type(ViolationType.OVERSPEED)
+                    .source(ViolationSource.MONITOR)
+                    .latitude(lat)
+                    .longitude(lng)
+                    .speedKmh(Math.round(speed * 10) / 10.0)
+                    .limitKmh(roadLimit)
+                    .headingDegrees(heading)
+                    .zoneName(road.isMapped() ? road.getName() : null)
+                    .simulated(false)
+                    .build(), true);
+            if (speed >= SpeedLimitLaw.dangerous(roadLimit)) {
+                nearbyDangerService.warnAboutViolation(vehicle, ViolationType.OVERSPEED, speed, heading);
+            }
+        }
+
+        // Roads not loaded at all (first start, map servers down): the real
+        // limit isn't known, so record nothing - but warn the drivers around
+        // a vehicle going very fast.
+        boolean veryFast = !simulated && speedZone == null && !roadsKnown && speed >= nearbyWarningSpeedKmh;
         if (sustained(vid + ":fast", veryFast, now)) {
             nearbyDangerService.warnAboutViolation(vehicle, ViolationType.OVERSPEED, speed, heading);
         }
 
         if (simulated) {
-            return;
+            return road;
         }
         boolean moving = speed >= MOVING_KMH;
 
@@ -213,6 +262,24 @@ public class RuleMonitorService {
                     .speedKmh(Math.round(speed * 10) / 10.0)
                     .headingDegrees(heading)
                     .zoneName(wrongWay.getName())
+                    .simulated(false)
+                    .build(), true);
+            nearbyDangerService.warnAboutViolation(vehicle, ViolationType.WRONG_WAY, speed, heading);
+        }
+
+        // 2b. Wrong way on a real one-way road (OpenStreetMap).
+        boolean roadWrong = wrongWay == null && moving && road != null && road.isWrongWay();
+        if (sustained(vid + ":roadwrongway", roadWrong, now) && road != null) {
+            trafficRuleService.record(TrafficViolation.builder()
+                    .vehicle(vehicle)
+                    .driver(vehicle.getOwner())
+                    .type(ViolationType.WRONG_WAY)
+                    .source(ViolationSource.MONITOR)
+                    .latitude(lat)
+                    .longitude(lng)
+                    .speedKmh(Math.round(speed * 10) / 10.0)
+                    .headingDegrees(heading)
+                    .zoneName(road.getName())
                     .simulated(false)
                     .build(), true);
             nearbyDangerService.warnAboutViolation(vehicle, ViolationType.WRONG_WAY, speed, heading);
@@ -253,6 +320,7 @@ public class RuleMonitorService {
             nearbyDangerService.cautionErraticDriver(vehicle);
             nearbyDangerService.warnAboutViolation(vehicle, ViolationType.DANGEROUS_DRIVING, speed, heading);
         }
+        return road;
     }
 
     /**

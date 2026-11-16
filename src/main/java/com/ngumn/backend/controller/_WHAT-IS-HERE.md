@@ -13,7 +13,7 @@ Every address the app or website calls, like /api/incidents. A controller checks
 | `CommentController.java` | Deleting a comment. Comments are listed and added under their report |
 | `CommunityController.java` | Trust scores from community verification (see CommunityService). |
 | `ComplaintController.java` | "Report a rule-breaker" - complaints about other drivers, trusted or taken down by people nearby liking or disliking them rather than by an admin (see CommunityService). |
-| `DemoController.java` | Starts/stops the simulated-traffic demo (used for showing the app working without real hardware or several physical devices). |
+| `LiveDataController.java` | Real roads, live traffic jams, live weather and the learned models: `/api/roads/at`, `/api/traffic/live`, `/api/traffic/forecast`, `/api/weather`, and the Control Centre's Live data & AI panel. |
 | `EmergencyController.java` | API addresses for Emergency. |
 | `HealthController.java` | A plain, unauthenticated "is the server up" endpoint. |
 | `HotspotController.java` | GET /api/hotspots?lat=&lng=&radiusMeters= - accident black spots near a point (see HotspotService). |

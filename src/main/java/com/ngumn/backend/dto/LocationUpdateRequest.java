@@ -15,4 +15,7 @@ public class LocationUpdateRequest {
     private Double speedKmh;
 
     private Double directionDegrees;
+
+    /** GPS accuracy of the fix in metres, when the phone gives it (helps match the right road). */
+    private Double accuracyMeters;
 }

@@ -35,6 +35,19 @@ public class VehicleResponse {
     /** How the owner is travelling now: WALK, CYCLE, BIKE, AUTO, CAR, BUS, TRUCK or EMERGENCY. */
     private TravelMode travelMode;
     private String plateNumber;
+    /**
+     * Only in the answer to the owner's own location update: the road they
+     * are on and its real speed limit / one-way rule (see RoadRules).
+     */
+    private com.ngumn.backend.roads.RoadInfo road;
+
+    public VehicleResponse(Long id, String vehicleCode, VehicleType vehicleType, String ownerName,
+                           Double currentLatitude, Double currentLongitude, Double speedKmh, Double directionDegrees,
+                           VehicleStatus status, Boolean emergencyStatus, Boolean isSimulated,
+                           LocalDateTime lastLocationUpdate, Long ownerId, TravelMode travelMode, String plateNumber) {
+        this(id, vehicleCode, vehicleType, ownerName, currentLatitude, currentLongitude, speedKmh, directionDegrees,
+                status, emergencyStatus, isSimulated, lastLocationUpdate, ownerId, travelMode, plateNumber, null);
+    }
 
     public static VehicleResponse from(Vehicle v) {
         return new VehicleResponse(

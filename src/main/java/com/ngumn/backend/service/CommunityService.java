@@ -3,6 +3,7 @@ package com.ngumn.backend.service;
 import com.ngumn.backend.dto.*;
 import com.ngumn.backend.entity.*;
 import com.ngumn.backend.exception.ApiException;
+import com.ngumn.backend.ml.ReportTrustModel;
 import com.ngumn.backend.repository.*;
 import com.ngumn.backend.util.GeoUtil;
 import com.ngumn.backend.util.ReportLifetime;
@@ -102,6 +103,34 @@ public class CommunityService {
         this.webSocketHandler = webSocketHandler;
     }
 
+    private ReportTrustModel trustModel;
+
+    /** The machine-learning model that estimates how likely a report is true (optional in tests). */
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setTrustModel(ReportTrustModel trustModel) {
+        this.trustModel = trustModel;
+    }
+
+    /** What the trust model knows about a report: its reporter's record, how many saw it, when, what kind. */
+    ReportTrustModel.Report trustFeatures(User reporter, ReportType type, int reporters, LocalDateTime at,
+                                          boolean ruleBreaker, Map<Long, TrustResponse> cache) {
+        TrustResponse t = reporter == null ? null
+                : cache != null ? cache.computeIfAbsent(reporter.getId(), this::trustFor) : trustFor(reporter.getId());
+        ReportTrustModel.Kind kind;
+        if (ruleBreaker) kind = ReportTrustModel.Kind.RULE_BREAKER;
+        else if (type == ReportType.ACCIDENT) kind = ReportTrustModel.Kind.ACCIDENT;
+        else if (type == ReportType.POTHOLE) kind = ReportTrustModel.Kind.POTHOLE;
+        else if (type == ReportType.TRAFFIC_JAM) kind = ReportTrustModel.Kind.JAM;
+        else kind = ReportTrustModel.Kind.HAZARD;
+        return new ReportTrustModel.Report(
+                t != null ? t.getTrustScore() : 50,
+                t != null ? t.getVerifiedReports() : 0,
+                t != null ? t.getRejectedReports() : 0,
+                Math.max(0, reporters - 1),
+                at != null ? at.getHour() : LocalDateTime.now().getHour(),
+                kind);
+    }
+
     // ------------------------------------------------------------------
     // Hazard reports
     // ------------------------------------------------------------------
@@ -132,6 +161,10 @@ public class CommunityService {
                     myDislikes.contains(id),
                     myGone.contains(id),
                     now));
+            if (trustModel != null) {
+                out.get(out.size() - 1).setTrustProbability(trustModel.percent(
+                        trustFeatures(r.getReporter(), r.getType(), r.reporters(), r.getTimestamp(), false, trustCache)));
+            }
         }
         return out;
     }
@@ -154,6 +187,11 @@ public class CommunityService {
         Long reporterId = report.getReporter() != null ? report.getReporter().getId() : null;
         ReportStatus outcome = outcome(likes, dislikes, likesNeeded(reporterId));
         if (outcome == null) return report;
+        if (trustModel != null) {
+            // A real, labelled example for the trust model - features as they were before this decision.
+            trustModel.learn(trustFeatures(report.getReporter(), report.getType(), report.reporters(),
+                    report.getTimestamp(), false, null), outcome == ReportStatus.VERIFIED);
+        }
 
         report.setStatus(outcome);
         report.setDecidedAt(LocalDateTime.now());
@@ -274,6 +312,10 @@ public class CommunityService {
                     myDislikes.contains(id),
                     myGone.contains(id),
                     now));
+            if (trustModel != null) {
+                out.get(out.size() - 1).setTrustProbability(trustModel.percent(
+                        trustFeatures(c.getReporter(), null, 1, c.getCreatedAt(), true, trustCache)));
+            }
         }
         return out;
     }
@@ -307,6 +349,10 @@ public class CommunityService {
         Long reporterId = complaint.getReporter() != null ? complaint.getReporter().getId() : null;
         ReportStatus outcome = outcome(likes, dislikes, likesNeeded(reporterId));
         if (outcome == null) return complaint;
+        if (trustModel != null) {
+            trustModel.learn(trustFeatures(complaint.getReporter(), null, 1, complaint.getCreatedAt(), true, null),
+                    outcome == ReportStatus.VERIFIED);
+        }
 
         complaint.setStatus(outcome);
         complaint.setDecidedAt(LocalDateTime.now());

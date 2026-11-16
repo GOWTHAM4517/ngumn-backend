@@ -218,7 +218,7 @@ public class HazardAheadService {
         String desc = r.getDescription() != null ? r.getDescription().trim().replaceAll("\\s+", " ") : "";
         desc = desc.replaceAll("(?i)\\s+ahead$", "");
         String label = !desc.isEmpty() && desc.length() <= 32 && !desc.startsWith("(") ? VehicleLabels.capitalise(desc) : type;
-        boolean sample = r.getReporter() != null && DemoSimulatorService.DEMO_USER_EMAIL.equals(r.getReporter().getEmail());
+        boolean sample = r.getReporter() != null && com.ngumn.backend.live.LegacyDemoCleanup.DEMO_USER_EMAIL.equals(r.getReporter().getEmail());
         return sample ? label + " (sample)" : label;
     }
 

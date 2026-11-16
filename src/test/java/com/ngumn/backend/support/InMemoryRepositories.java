@@ -161,6 +161,9 @@ public final class InMemoryRepositories {
             lifecycle(o, jakarta.persistence.PrePersist.class);
         } else {
             lifecycle(o, jakarta.persistence.PreUpdate.class);
+            // Like JPA's merge: a new object with an existing id replaces that row.
+            Object key = id.get(o);
+            rows.removeIf(r -> r != o && same(idOf(r), key));
         }
         if (rows.stream().noneMatch(r -> r == o)) rows.add(o);
         return o;

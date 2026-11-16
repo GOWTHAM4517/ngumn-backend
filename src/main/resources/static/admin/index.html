@@ -154,6 +154,7 @@
       <button data-tab="complaints">Complaints <span class="count" id="nComplaints"></span></button>
       <button data-tab="people">People &amp; responders <span class="count" id="nRequests"></span></button>
       <button data-tab="community">Community &amp; traffic</button>
+      <button data-tab="live">Live data &amp; AI</button>
       <button data-tab="setup">Broadcast &amp; setup</button>
     </nav>
 
@@ -321,7 +322,7 @@
 
     <!-- COMMUNITY -->
     <div class="tab" id="tab-community">
-      <div class="disclaimer">Risk levels come from a rule-based engine (not machine learning). The Green Corridor is a software simulation - it doesn't control real traffic signals. Rows marked <b>simulated</b> come from Demo Mode.</div>
+      <div class="disclaimer">Speed limits and one-way roads are the real ones from OpenStreetMap and the MoRTH notification (see <b>Live data &amp; AI</b>). Risk levels come from a rule-based engine. The Green Corridor tells drivers to give way - it doesn't control traffic signals.</div>
       <section><h2>Hazard reports awaiting community votes <span class="badge" id="pendingCount">0</span></h2>
         <div class="sub" style="margin:-4px 0 10px">People nearby confirm or reject reports in the app. Admin buttons are an override.</div>
         <div id="reportsList"><div class="empty">Loading…</div></div></section>
@@ -330,8 +331,30 @@
         <div id="marketList"><div class="empty">Loading…</div></div></section>
       <section><h2>Rule-breaker reports <span class="badge" id="complaintCount">0</span></h2><div id="complaintsList"><div class="empty">Loading…</div></div></section>
       <section><h2>Traffic violations <span class="badge" id="violationCount">0</span></h2><div id="violationsList"><div class="empty">Loading…</div></div></section>
-      <section><h2>Active Green Corridors (simulated) <span class="badge" id="emergencyCount">0</span></h2><div id="emergencyList"><div class="empty">Loading…</div></div></section>
+      <section><h2>Active Green Corridors <span class="badge" id="emergencyCount">0</span></h2><div id="emergencyList"><div class="empty">Loading…</div></div></section>
       <section><h2>Recent alerts <span class="badge" id="alertCount">0</span></h2><div id="alertsList"><div class="empty">Loading…</div></div></section>
+    </div>
+
+    <!-- LIVE DATA & AI -->
+    <div class="tab" id="tab-live">
+      <div class="tiles" id="lTiles"><div class="empty">Loading…</div></div>
+      <section><h2>Real roads of the region <span class="badge" id="lRoadState"></span></h2>
+        <div class="sub" style="margin:-4px 0 10px">Every speed limit and one-way road Raksio checks comes from OpenStreetMap, downloaded by the server and refreshed every Sunday. Where a road has no posted limit, the legal limit for the vehicle and road type applies (MoRTH S.O. 1522(E), 6 Apr 2018: car 70 / bike, bus, lorry 60 / auto 50 km/h in the city; car 100 on 4-lane divided roads), with the notification's 5% tolerance. Speed zones you add under Road rules override them.</div>
+        <div id="lRoads"><div class="empty">Loading…</div></div>
+        <div class="toolbar" style="margin-top:10px"><button class="secondary" id="lRoadsRefresh">Download the roads again now</button><span class="sub" id="lRoadsMsg"></span></div>
+      </section>
+      <section><h2>Live weather <span class="badge" id="lWeatherState"></span></h2>
+        <div class="sub" style="margin:-4px 0 10px">Read every 15 minutes from Open-Meteo for each town. Thunderstorm, heavy rain, fog, heat and strong-wind warnings are pushed to the people in that town.</div>
+        <div id="lWeather"><div class="empty">Loading…</div></div>
+        <div class="toolbar" style="margin-top:10px"><button class="secondary" id="lWeatherRefresh">Read the weather now</button></div>
+      </section>
+      <section><h2>Traffic jams detected now <span class="badge" id="lJamCount">0</span></h2>
+        <div class="sub" style="margin:-4px 0 10px">Found by the traffic model from live speeds: roads where vehicles move far slower than that road's learned normal speed. Drivers heading into a jam are warned.</div>
+        <div id="lJams"><div class="empty">Loading…</div></div>
+      </section>
+      <section><h2>Machine-learning models</h2>
+        <div id="lModels"><div class="empty">Loading…</div></div>
+      </section>
     </div>
 
     <!-- SETUP -->
@@ -519,7 +542,68 @@
     if (tab === 'people') { loadRequests(); loadUsers(); }
     if (tab === 'community') { loadMarket(); loadReports(); loadRuleBreakers(); loadViolations(); loadCorridors(); loadAlerts(); }
     if (tab === 'setup') loadChannels();
+    if (tab === 'live') loadLiveData();
   }
+
+  // ---------------------------------------------------------------- live data & AI
+  function n(v) { return v == null ? '–' : Number(v).toLocaleString('en-IN'); }
+  function stateTag(st) {
+    var s = (st && st.state) || 'NOT_YET';
+    var cls = s === 'OK' ? 'good' : s === 'FAILED' ? 'bad' : 'warn';
+    var label = s === 'OK' ? 'live' : s === 'FAILED' ? 'failed' : s === 'RUNNING' ? 'downloading…' : 'waiting';
+    return '<span class="tag ' + cls + '">' + label + '</span>';
+  }
+  function loadLiveData() {
+    if (!isAdmin()) { $('lTiles').innerHTML = '<div class="empty">Sign in as admin to see this.</div>'; return; }
+    api('/api/admin/live-data').then(function (d) {
+      var r = d.roads, t = d.ml.traffic, rt = d.ml.reportTrust;
+      $('lTiles').innerHTML = [
+        tile(n(r.roads), 'real roads loaded'), tile(n(r.withPostedLimit), 'with posted limit'), tile(n(r.oneWay), 'one-way roads'),
+        tile(d.weather.towns.length, 'towns with live weather'), tile(d.jams.length, 'jams / slow roads now', true),
+        tile(n(t.samples), 'speeds learned'), tile(n(rt.samples), 'reports learned from')
+      ].join('');
+      $('lRoadState').outerHTML = '<span id="lRoadState">' + stateTag(r.status) + '</span>';
+      $('lRoads').innerHTML = '<div class="card-row"><div class="main"><div class="title">' + esc(r.region) + ' · ' +
+        esc((r.status && r.status.message) || 'Not downloaded yet - it starts by itself a few seconds after the server starts.') + '</div>' +
+        '<div class="meta">Source: ' + esc((r.status && r.status.origin) || 'OpenStreetMap (Overpass API)') +
+        (r.status && r.status.lastSuccessAt ? ' · last downloaded ' + esc(when(r.status.lastSuccessAt)) : '') +
+        (r.status && r.status.lastAttemptAt ? ' · last tried ' + esc(when(r.status.lastAttemptAt)) : '') +
+        ' · area ' + r.bounds.map(function (x) { return x.toFixed(2); }).join(', ') + '</div>' +
+        '<div class="meta">' + esc(r.law) + '</div></div></div>';
+      $('lWeatherState').outerHTML = '<span id="lWeatherState">' + stateTag(d.weather.status) + '</span>';
+      $('lWeather').innerHTML = d.weather.towns.length ? d.weather.towns.map(function (w) {
+        var warn = (w.warnings || []).map(function (x) { return '<span class="tag ' + (x.level === 'HIGH' ? 'bad' : x.level === 'MEDIUM' ? 'warn' : '') + '">' + esc(x.title) + '</span>'; }).join('');
+        return '<div class="card-row"><div class="main"><div class="title">' + esc(w.place) + ' · ' + esc(w.description) +
+          (w.temperatureC != null ? ' · ' + esc(w.temperatureC) + ' °C' : '') + warn + '</div>' +
+          '<div class="meta">Rain now ' + esc(w.precipitationMm) + ' mm/h · next 3 h up to ' + esc(w.next3hPrecipitationMm) +
+          ' mm/h · gusts ' + esc(w.gustsKmh) + ' km/h · read ' + esc(when(w.readAt)) + '</div>' +
+          (w.warnings || []).map(function (x) { return '<div class="meta">' + esc(x.message) + '</div>'; }).join('') + '</div></div>';
+      }).join('') : '<div class="empty">' + esc((d.weather.status && d.weather.status.message) || 'Waiting for the first reading.') + '</div>';
+      $('lJamCount').textContent = d.jams.length;
+      $('lJams').innerHTML = d.jams.length ? d.jams.map(function (j) {
+        return '<div class="card-row' + (j.level === 'JAM' ? ' urgent' : '') + '"><div class="main"><div class="title"><span class="dot ' + (j.level === 'JAM' ? 'high' : 'medium') + '"></span>' +
+          esc(j.name) + ' · ' + (j.level === 'JAM' ? 'Jam' : 'Slow') + '</div><div class="meta">' + esc(j.vehicles) + ' vehicles at ' + esc(j.speedKmh) +
+          ' km/h (usually ' + esc(j.usualKmh) + ') · since ' + esc(when(j.since)) + '</div></div>' +
+          '<a class="secondary" style="font-size:12px;color:var(--accent)" target="_blank" href="https://www.openstreetmap.org/?mlat=' + j.lat + '&mlon=' + j.lng + '#map=17/' + j.lat + '/' + j.lng + '">Map</a></div>';
+      }).join('') : '<div class="empty">No jams right now.</div>';
+      function model(m, extra) {
+        return '<div class="card-row"><div class="main"><div class="title">' + esc(m.name) + '</div><div class="meta">Learns from: ' + esc(m.learnsFrom) +
+          ' · examples so far: ' + n(m.samples) + '</div><div class="meta">' + extra + '</div></div></div>';
+      }
+      var tExtra = t.modelErrorKmh != null
+        ? 'Prediction error ' + esc(t.modelErrorKmh) + ' km/h vs ' + esc(t.fixedRuleErrorKmh) + ' km/h for a fixed guess (' + esc(t.improvementPercent) + '% better) · roads learned ' + n(t.roadsLearned)
+        : 'No trips on mapped roads yet - it starts learning with the first one.';
+      var wts = rt.weights ? Object.keys(rt.weights).map(function (k) { return k + ' ' + rt.weights[k]; }).join(' · ') : '';
+      var rExtra = (rt.accuracyPercent != null ? 'Accuracy on reports it had not seen: ' + esc(rt.accuracyPercent) + '% · log-loss ' + esc(rt.logLoss) + '<br>' : 'No decided reports yet - using its starting weights.<br>') + 'Weights: ' + esc(wts);
+      $('lModels').innerHTML = model(t, tExtra) + model(rt, rExtra);
+    }).catch(function (e) { $('lTiles').innerHTML = '<div class="error">' + esc(e.message) + '</div>'; });
+  }
+  $('lRoadsRefresh').addEventListener('click', function () {
+    api('/api/admin/live-data/roads/refresh', { method: 'POST' }).then(function (r) { $('lRoadsMsg').textContent = r.message; setTimeout(loadLiveData, 3000); }).catch(function (e) { alert(e.message); });
+  });
+  $('lWeatherRefresh').addEventListener('click', function () {
+    api('/api/admin/live-data/weather/refresh', { method: 'POST' }).then(loadLiveData).catch(function (e) { alert(e.message); });
+  });
 
   // ---------------------------------------------------------------- overview
   var map = null, layer = null;

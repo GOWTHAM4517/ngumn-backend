@@ -63,6 +63,8 @@ public class ComplaintResponse {
     private String endReason;
     private Integer goneCount;
     private Boolean goneByMe;
+    /** How likely this report is to be true, 0-100 (ml.ReportTrustModel). */
+    private Integer trustProbability;
 
     public static ComplaintResponse from(ViolationComplaint c, Integer reporterTrust, Integer confirmationsNeeded,
                                          Boolean myVote, Long viewerId) {
@@ -118,7 +120,8 @@ public class ComplaintResponse {
                 c.getClearedAt(),
                 c.endReasonAt(now),
                 c.getGoneCount() != null ? c.getGoneCount() : 0,
-                goneByMe
+                goneByMe,
+                null
         );
     }
 }

@@ -65,6 +65,12 @@ public class RoadReportResponse {
     private Integer commentCount;
     private Integer reportCount;
     private Boolean merged;
+    /**
+     * How likely this report is to be true, 0-100, from the report-trust
+     * model (ml.ReportTrustModel) - learned from how the community decided
+     * earlier reports. Null when not worked out.
+     */
+    private Integer trustProbability;
 
     public static RoadReportResponse from(RoadReport r) {
         return from(r, null, null, null, false, false, LocalDateTime.now());
@@ -107,6 +113,7 @@ public class RoadReportResponse {
                 likedByMe ? "LIKE" : dislikedByMe ? "DISLIKE" : null,
                 r.getCommentCount() != null ? r.getCommentCount() : 0,
                 r.reporters(),
+                null,
                 null
         );
     }

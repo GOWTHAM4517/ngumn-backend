@@ -117,7 +117,7 @@ public class RoadReportService {
 
     /** Demo Mode's sample person. */
     private static boolean isSample(User u) {
-        return u != null && DemoSimulatorService.DEMO_USER_EMAIL.equals(u.getEmail());
+        return u != null && com.ngumn.backend.live.LegacyDemoCleanup.DEMO_USER_EMAIL.equals(u.getEmail());
     }
 
     /** Reports still on the road right now, newest first - expired, cleared and rejected ones drop off. */

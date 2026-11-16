@@ -313,7 +313,7 @@ public class TrafficRuleService {
         String where = v.getZoneName() != null && !v.getZoneName().isBlank() ? " (" + v.getZoneName() + ")" : "";
         return switch (v.getType()) {
             case OVERSPEED -> v.getSpeedKmh() != null && v.getLimitKmh() != null
-                    ? String.format(Locale.ROOT, "Over-speeding: %d km/h in a %d km/h zone%s. Slow down.",
+                    ? String.format(Locale.ROOT, "Over-speeding: %d km/h where the limit is %d km/h%s. Slow down.",
                         Math.round(v.getSpeedKmh()), v.getLimitKmh(), where)
                     : "Over-speeding" + where + ". Slow down.";
             case WRONG_WAY -> "Wrong-way driving on a one-way road" + where + ". Stop safely and turn back.";

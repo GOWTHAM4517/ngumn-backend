@@ -385,44 +385,6 @@ public class ReportFeedbackService {
         return communityService.describeComplaint(user, complaint);
     }
 
-    // ------------------------------------------------------------------
-    // Demo Mode
-    // ------------------------------------------------------------------
-
-    /**
-     * Demo Mode only: one simulated person likes one open report or
-     * rule-breaker report, so trust can be shown with a single phone.
-     * Simulated people never dislike - they must not take anyone's real
-     * report down or cost them points. Called by DemoSimulatorService while
-     * the demo runs.
-     */
-    public void demoReact(List<User> demoVoters, Random random) {
-        if (demoVoters.isEmpty()) return;
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime since = now.minusHours(6);
-        List<RoadReport> reports = roadReportRepository.findByStatusAndTimestampAfter(ReportStatus.PENDING, since)
-                .stream().filter(r -> r.isActiveAt(now)).toList();
-        List<ViolationComplaint> complaints = complaintRepository.findByStatusAndCreatedAtAfter(ReportStatus.PENDING, since)
-                .stream().filter(c -> c.isActiveAt(now)).toList();
-        int total = reports.size() + complaints.size();
-        if (total == 0) return;
-
-        int pick = random.nextInt(total);
-        User person = demoVoters.get(random.nextInt(demoVoters.size()));
-        String reaction = "LIKE";
-        try {
-            if (pick < reports.size()) {
-                Long id = reports.get(pick).getId();
-                if (!reacted(person, VoteTarget.REPORT, id)) reactToReport(person, id, reaction);
-            } else {
-                Long id = complaints.get(pick - reports.size()).getId();
-                if (!reacted(person, VoteTarget.COMPLAINT, id)) reactToComplaint(person, id, reaction);
-            }
-        } catch (ApiException ignored) {
-            // This demo person can't react to it (e.g. it's theirs) - another one will next tick.
-        }
-    }
-
     private boolean reacted(User user, VoteTarget target, Long targetId) {
         return feedbackRepository.findByTargetTypeAndTargetIdAndUserIdAndKind(target, targetId, user.getId(), FeedbackKind.HELPFUL).isPresent()
                 || feedbackRepository.findByTargetTypeAndTargetIdAndUserIdAndKind(target, targetId, user.getId(), FeedbackKind.DISLIKE).isPresent();

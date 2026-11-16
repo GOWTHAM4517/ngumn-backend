@@ -7,10 +7,9 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 /**
- * Prototype configurable speed-limit dataset. Real-world legal speed
- * limits are NOT derived from GPS - this is a simple point+radius demo
- * table an admin can seed so the risk engine has something concrete to
- * compare vehicle speed against.
+ * A speed zone set by the admin / traffic police for a real place (a school
+ * zone, road works): a centre, a radius and a limit. It overrides the road's
+ * own limit (RoadDataService) inside the circle.
  */
 @Entity
 @Table(name = "road_speed_limits")
