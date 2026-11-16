@@ -78,6 +78,52 @@ public final class RoadNetwork {
             return best;
         }
 
+        /**
+         * Why this way of travelling may not use this road right now
+         * ("Pedestrian street", "No heavy vehicles 08:00-11:00"...), or null
+         * when it may. Walking is never restricted; cycling only by a
+         * vehicle ban on a pedestrian street is not checked (cycles may be
+         * wheeled through).
+         */
+        public String banFor(com.ngumn.backend.entity.TravelMode mode, java.time.LocalTime at) {
+            if (mode == null || !mode.motorised()) return null;
+            if (mode == com.ngumn.backend.entity.TravelMode.EMERGENCY) return null; // emergency vehicles may go anywhere
+            RoadSegment r = road.row;
+            if (Boolean.TRUE.equals(r.getNoMotorVehicles()) && inHours(r.getNoMotorHours(), at)) {
+                String base = "pedestrian".equals(r.getHighway()) ? "Pedestrian street - no vehicles" : "No motor vehicles";
+                return r.getNoMotorHours() == null ? base : base + " " + r.getNoMotorHours().replace(",", ", ");
+            }
+            if (mode == com.ngumn.backend.entity.TravelMode.TRUCK && Boolean.TRUE.equals(r.getNoHeavyVehicles())
+                    && inHours(r.getNoHeavyHours(), at)) {
+                return r.getNoHeavyHours() == null ? "No heavy vehicles" : "No heavy vehicles " + r.getNoHeavyHours().replace(",", ", ");
+            }
+            return null;
+        }
+
+        /** True when "08:00-11:00,17:00-21:00" covers the time (null = always). */
+        static boolean inHours(String hours, java.time.LocalTime at) {
+            if (hours == null || hours.isBlank()) return true;
+            if (at == null) return false;
+            int now = at.getHour() * 60 + at.getMinute();
+            for (String range : hours.split(",")) {
+                String[] p = range.split("-");
+                if (p.length != 2) continue;
+                int a = minutes(p[0]), b = minutes(p[1]);
+                if (a < 0 || b < 0) continue;
+                if (a <= b ? (now >= a && now < b) : (now >= a || now < b)) return true;
+            }
+            return false;
+        }
+
+        private static int minutes(String hhmm) {
+            String[] p = hhmm.trim().split(":");
+            try {
+                return Integer.parseInt(p[0]) * 60 + Integer.parseInt(p[1]);
+            } catch (RuntimeException e) {
+                return -1;
+            }
+        }
+
         /** True when the heading follows the drawing direction of the road (within 90 degrees). */
         public boolean forward(double heading) {
             return GeoUtil.angleDifference(heading, bearing) <= 90;
@@ -89,11 +135,13 @@ public final class RoadNetwork {
     private final Map<Long, List<int[]>> grid = new HashMap<>();
     private final long withMaxspeed;
     private final long oneways;
+    private final long restricted;
 
     public RoadNetwork(Collection<RoadSegment> rows) {
         List<Road> list = new ArrayList<>(rows.size());
         long ms = 0;
         long ow = 0;
+        long rs = 0;
         for (RoadSegment row : rows) {
             double[][] shape = Polyline.decode(row.getGeometry());
             if (shape[0].length < 2) continue;
@@ -103,6 +151,7 @@ public final class RoadNetwork {
             byId.put(row.getId(), road);
             if (row.getMaxspeedKmh() != null || row.getMaxspeedForwardKmh() != null || row.getMaxspeedBackwardKmh() != null) ms++;
             if (row.getOneway() != null && row.getOneway() != 0) ow++;
+            if (Boolean.TRUE.equals(row.getNoMotorVehicles()) || Boolean.TRUE.equals(row.getNoHeavyVehicles())) rs++;
             for (int i = 0; i + 1 < road.lats.length; i++) {
                 file(index, i, road.lats[i], road.lngs[i], road.lats[i + 1], road.lngs[i + 1]);
             }
@@ -110,6 +159,7 @@ public final class RoadNetwork {
         this.roads = List.copyOf(list);
         this.withMaxspeed = ms;
         this.oneways = ow;
+        this.restricted = rs;
     }
 
     private void file(int road, int piece, double aLat, double aLng, double bLat, double bLng) {
@@ -150,6 +200,11 @@ public final class RoadNetwork {
 
     public long oneways() {
         return oneways;
+    }
+
+    /** Roads closed to some or all vehicles (always or at some hours). */
+    public long restricted() {
+        return restricted;
     }
 
     public List<Road> roads() {

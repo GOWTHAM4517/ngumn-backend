@@ -56,6 +56,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * Prediction. For any hour, roads whose expected speed is below 60% of free
  * flow (with 5+ readings for that hour) are "usually slow at this time".
  *
+ * What it learned is saved every 5 minutes and when the server stops.
+ *
  * Accuracy is measured honestly: each new reading is first predicted, then
  * learned from; the running mean absolute error of the model is shown next
  * to that of the fixed prior (Control Centre > Live data & AI).
@@ -438,7 +440,13 @@ public class TrafficSpeedModel {
         }
     }
 
-    @Scheduled(fixedDelay = 600_000, initialDelay = 600_000)
+    /** Render stops or sleeps the server: keep what was learned since the last save. */
+    @jakarta.annotation.PreDestroy
+    public void flushOnShutdown() {
+        flush();
+    }
+
+    @Scheduled(fixedDelay = 300_000, initialDelay = 300_000)
     public void flush() {
         List<TrafficSpeedStat> rows = new ArrayList<>();
         LocalDateTime now = LocalDateTime.now();

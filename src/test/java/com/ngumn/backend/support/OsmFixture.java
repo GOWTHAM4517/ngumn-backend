@@ -19,6 +19,10 @@ import java.util.Map;
  * - Patamata School Road: tertiary, posted 40, at x=600 from y=-300 to y=300.
  * - Ring Road: secondary, posted "60 km/h", at y=-600 from x=-200 to x=700.
  * - An untagged residential street and a footway - neither should be kept.
+ * - Temple Street: pedestrian, at x=1000 from y=-200 to y=200 (no vehicles).
+ * - Market Road: residential, hgv=no, at y=800 from x=600 to x=1000.
+ * - Auto Nagar Road: tertiary, "hgv:conditional"="no @ (08:00-11:00,17:00-21:00)", at x=1400.
+ * - A private apartment lane (access=private) - not kept.
  */
 public final class OsmFixture {
 
@@ -51,6 +55,11 @@ public final class OsmFixture {
                 line(-200, -600, 700, -600, 6)));
         ways.add(way(1007, Map.of("highway", "residential", "name", "Quiet Street"), line(200, 200, 200, 350, 3)));
         ways.add(way(1008, Map.of("highway", "footway"), line(100, 100, 150, 150, 3)));
+        ways.add(way(1009, Map.of("highway", "pedestrian", "name", "Temple Street"), line(1000, -200, 1000, 200, 5)));
+        ways.add(way(1010, Map.of("highway", "residential", "name", "Market Road", "hgv", "no"), line(600, 800, 1000, 800, 5)));
+        ways.add(way(1011, Map.of("highway", "tertiary", "name", "Auto Nagar Road", "hgv:conditional", "no @ (08:00-11:00,17:00-21:00)"),
+                line(1400, -300, 1400, 300, 5)));
+        ways.add(way(1012, Map.of("highway", "residential", "name", "Apartment Lane", "access", "private", "oneway", "yes"), line(300, 600, 400, 600, 3)));
         return "{\"version\":0.6,\"generator\":\"Overpass API\",\"elements\":[" + String.join(",", ways) + "]}";
     }
 

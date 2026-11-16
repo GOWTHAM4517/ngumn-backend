@@ -25,9 +25,13 @@ public final class OsmRoadParser {
             "motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link",
             "secondary", "secondary_link", "tertiary", "tertiary_link");
 
-    /** Smaller roads, kept only when the map gives them a speed limit or a one-way direction. */
+    /** Smaller roads, kept only when the map gives them a speed limit, a one-way direction or a vehicle ban. */
     public static final Set<String> MINOR_ROADS = Set.of(
             "unclassified", "residential", "living_street", "service", "road");
+
+    /** Values that let motor vehicles in (anything else in motor_vehicle / access bans them). */
+    private static final Set<String> ALLOWED = Set.of("yes", "designated", "permissive", "destination", "delivery",
+            "customers", "official", "agricultural", "forestry", "discouraged");
 
     private OsmRoadParser() {
     }
@@ -56,9 +60,20 @@ public final class OsmRoadParser {
         String highway = text(tags, "highway");
         if (highway == null) return null;
         boolean main = MAIN_ROADS.contains(highway);
-        if (!main && !MINOR_ROADS.contains(highway)) return null;
-        String access = text(tags, "motor_vehicle", text(tags, "access"));
-        if ("no".equals(access) || "private".equals(access)) return null;
+        boolean pedestrianStreet = "pedestrian".equals(highway);
+        if (!main && !MINOR_ROADS.contains(highway) && !pedestrianStreet) return null;
+        String motor = text(tags, "motor_vehicle", text(tags, "vehicle", text(tags, "access")));
+        // Private roads (apartment and campus lanes) aren't public rules - leave them out.
+        if ("private".equals(motor)) return null;
+        // Closed to motor vehicles: a pedestrian street, or motor_vehicle / vehicle / access = no.
+        boolean noMotor = pedestrianStreet ? (motor == null || !ALLOWED.contains(motor)) : "no".equals(motor);
+        String noMotorHours = noMotor ? null
+                : hours(text(tags, "motor_vehicle:conditional", text(tags, "access:conditional")));
+        if (noMotorHours != null) noMotor = true;
+        String hgv = text(tags, "hgv");
+        boolean noHeavy = "no".equals(hgv);
+        String noHeavyHours = noHeavy ? null : hours(text(tags, "hgv:conditional"));
+        if (noHeavyHours != null) noHeavy = true;
 
         JsonNode geom = e.path("geometry");
         if (!geom.isArray() || geom.size() < 2) return null;
@@ -86,7 +101,7 @@ public final class OsmRoadParser {
         Integer maxspeed = SpeedLimitLaw.parseMaxspeed(text(tags, "maxspeed"));
         Integer forward = SpeedLimitLaw.parseMaxspeed(text(tags, "maxspeed:forward"));
         Integer backward = SpeedLimitLaw.parseMaxspeed(text(tags, "maxspeed:backward"));
-        if (!main && oneway == 0 && maxspeed == null && forward == null && backward == null) {
+        if (!main && oneway == 0 && maxspeed == null && forward == null && backward == null && !noMotor && !noHeavy) {
             return null; // nothing on this small road that changes the rules
         }
         Integer lanes = null;
@@ -115,6 +130,10 @@ public final class OsmRoadParser {
                 .cyclesBothWays("no".equals(text(tags, "oneway:bicycle")) || "opposite".equals(text(tags, "cycleway")))
                 .divided(divided)
                 .lanes(lanes)
+                .noMotorVehicles(noMotor)
+                .noMotorHours(noMotorHours)
+                .noHeavyVehicles(noHeavy)
+                .noHeavyHours(noHeavyHours)
                 .geometry(Polyline.encode(lats, lngs))
                 .minLat(minLat).maxLat(maxLat).minLng(minLng).maxLng(maxLng)
                 .importedAt(importedAt)
@@ -134,6 +153,25 @@ public final class OsmRoadParser {
         if ("roundabout".equals(junction) || "circular".equals(junction)) return 1;
         if ("motorway".equals(highway)) return 1;
         return 0;
+    }
+
+    /**
+     * The hours of a timed ban, from an OSM conditional value such as
+     * "no @ (08:00-11:00,17:00-21:00)" - only daily hour ranges are read;
+     * anything with days, dates or other conditions gives null (ignored),
+     * so a ban is never applied at the wrong time.
+     */
+    public static String hours(String conditional) {
+        if (conditional == null) return null;
+        String v = conditional.trim();
+        if (!v.toLowerCase(Locale.ROOT).startsWith("no")) return null;
+        int at = v.indexOf('@');
+        if (at < 0) return null;
+        String when = v.substring(at + 1).trim();
+        if (when.startsWith("(") && when.endsWith(")")) when = when.substring(1, when.length() - 1).trim();
+        if (!when.matches("\\d{1,2}:\\d{2}\\s*-\\s*\\d{1,2}:\\d{2}(\\s*[,;]\\s*\\d{1,2}:\\d{2}\\s*-\\s*\\d{1,2}:\\d{2})*")) return null;
+        String clean = when.replaceAll("\\s+", "").replace(';', ',');
+        return clean.length() > 80 ? null : clean;
     }
 
     private static String text(JsonNode tags, String key) {

@@ -1,6 +1,6 @@
 # Real roads (OpenStreetMap) and the speed-limit law
 
-Every speed limit and one-way road Raksio checks comes from here - the real road map of the Vijayawada region, not values typed in.
+Every speed limit, one-way road and road closed to vehicles (pedestrian streets, no motor vehicles, no heavy vehicles and their hours) that Raksio checks comes from here - the real road map of the Vijayawada region, not values typed in.
 
 | File | What it is |
 |---|---|
@@ -8,7 +8,7 @@ Every speed limit and one-way road Raksio checks comes from here - the real road
 | `OsmRoadParser.java` | Reads the Overpass answer: road class, name, number (NH16), posted limit, one-way direction, divided carriageway, lanes, shape. |
 | `RoadSegment.java` / `RoadSegmentRepository.java` | One road (one OSM way) in the database - table `road_segments`. |
 | `RoadNetwork.java` | The roads in memory with a grid index: "which road is this GPS point on?" in microseconds. |
-| `RoadRules.java` | The road under a GPS point and its rules: picks the right carriageway by heading, decides wrong-way carefully. |
+| `RoadRules.java` | The road under a GPS point and its rules: picks the right carriageway by heading, decides wrong-way and no-entry carefully. |
 | `SpeedLimitLaw.java` | India's legal limits (MoRTH S.O. 1522(E), 6 Apr 2018) by vehicle and road type, the 5% tolerance, reading OSM maxspeed values. |
-| `RoadInfo.java` | What the app gets back with every location update: road name, its limit and where it comes from, one-way, wrong-way. |
+| `RoadInfo.java` | What the app gets back with every location update: road name, its limit and where it comes from, one-way, wrong-way, no-entry and why. |
 | `Polyline.java` | Google's encoded polyline - a road's shape as one short string. |

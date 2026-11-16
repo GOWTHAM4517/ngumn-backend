@@ -38,6 +38,10 @@ public class RoadInfo {
     private boolean oneway;
     /** Moving against the one-way direction right now. */
     private boolean wrongWay;
+    /** On a road this vehicle may not use right now (pedestrian street, vehicle ban). */
+    private boolean noEntry;
+    /** Why, e.g. "Pedestrian street - no vehicles" or "No heavy vehicles 08:00-11:00". */
+    private String restriction;
     /** Travelling in the road's drawing direction (used to keep the two directions of a two-way road apart). */
     private boolean forward;
     /** Metres from the road's centre line. */

@@ -88,6 +88,10 @@ public class WeatherService {
     @Value("${ngumn.weather.enabled:true}")
     private boolean enabled = true;
 
+    /** Open-Meteo's forecast endpoint (configurable, e.g. for a self-hosted Open-Meteo). */
+    @Value("${ngumn.weather.url:https://api.open-meteo.com/v1/forecast}")
+    private String baseUrl = "https://api.open-meteo.com/v1/forecast";
+
     public WeatherService(LiveDataStatusRepository statusRepository, VehicleRepository vehicleRepository,
                           AlertService alertService, NgumnWebSocketHandler webSocketHandler) {
         this.statusRepository = statusRepository;
@@ -100,14 +104,18 @@ public class WeatherService {
         this.fetcher = f;
     }
 
-    static String url() {
+    String url() {
+        return url(baseUrl);
+    }
+
+    static String url(String base) {
         StringJoiner lat = new StringJoiner(",");
         StringJoiner lng = new StringJoiner(",");
         for (Place p : PLACES) {
             lat.add(String.valueOf(p.lat()));
             lng.add(String.valueOf(p.lng()));
         }
-        return "https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lng
+        return base + "?latitude=" + lat + "&longitude=" + lng
                 + "&current=temperature_2m,precipitation,weather_code,wind_gusts_10m"
                 + "&hourly=precipitation,weather_code&forecast_hours=4&timezone=Asia%2FKolkata";
     }

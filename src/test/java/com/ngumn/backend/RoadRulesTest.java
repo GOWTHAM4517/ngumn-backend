@@ -29,7 +29,12 @@ class RoadRulesTest {
     @Test
     void parsesOnlyRoadsThatMatter() throws Exception {
         List<RoadSegment> roads = OsmRoadParser.parse(OsmFixture.json(), LocalDateTime.now());
-        assertEquals(6, roads.size(), "untagged residential street and footway are left out");
+        assertEquals(9, roads.size(), "untagged residential street, footway and private lane are left out");
+        RoadSegment temple = roads.stream().filter(r -> r.getId() == 1009).findFirst().orElseThrow();
+        assertTrue(temple.getNoMotorVehicles());
+        RoadSegment autoNagar = roads.stream().filter(r -> r.getId() == 1011).findFirst().orElseThrow();
+        assertTrue(autoNagar.getNoHeavyVehicles());
+        assertEquals("08:00-11:00,17:00-21:00", autoNagar.getNoHeavyHours());
         RoadSegment nh = roads.stream().filter(r -> r.getId() == 1002).findFirst().orElseThrow();
         assertEquals(1, nh.getOneway());
         assertTrue(nh.getDivided(), "a one-way trunk carriageway is a divided highway");
@@ -149,6 +154,38 @@ class RoadRulesTest {
     }
 
     @Test
+    void closedRoadsAreNoEntryForTheRightVehicles() throws Exception {
+        RoadNetwork net = network();
+        java.time.LocalTime noon = java.time.LocalTime.of(12, 0);
+        RoadInfo car = RoadRules.at(net, lat(0), lng(1001), 0.0, 20, 5.0, TravelMode.BIKE, noon);
+        assertTrue(car.isNoEntry(), "a bike on a pedestrian street");
+        assertEquals("Temple Street", car.getName());
+        assertTrue(car.getRestriction().startsWith("Pedestrian street"));
+        assertFalse(RoadRules.at(net, lat(0), lng(1001), 0.0, 5, 5.0, TravelMode.WALK, noon).isNoEntry(), "walking is fine");
+        assertFalse(RoadRules.at(net, lat(0), lng(1001), 0.0, 3, 5.0, TravelMode.CAR, noon).isNoEntry(), "not moving - no verdict");
+        assertFalse(RoadRules.at(net, lat(0), lng(1001), 0.0, 30, 5.0, TravelMode.EMERGENCY, noon).isNoEntry(), "emergency vehicles may enter");
+
+        assertTrue(RoadRules.at(net, lat(801), lng(800), 90.0, 25, 5.0, TravelMode.TRUCK, noon).isNoEntry(), "lorry on Market Road (hgv=no)");
+        assertFalse(RoadRules.at(net, lat(801), lng(800), 90.0, 25, 5.0, TravelMode.CAR, noon).isNoEntry(), "cars may use it");
+
+        RoadInfo morning = RoadRules.at(net, lat(0), lng(1401), 0.0, 30, 5.0, TravelMode.TRUCK, java.time.LocalTime.of(9, 30));
+        assertTrue(morning.isNoEntry(), "lorry on Auto Nagar Road during the morning ban");
+        assertTrue(morning.getRestriction().contains("08:00-11:00"));
+        assertFalse(RoadRules.at(net, lat(0), lng(1401), 0.0, 30, 5.0, TravelMode.TRUCK, java.time.LocalTime.of(14, 0)).isNoEntry(),
+                "outside the ban hours");
+        assertTrue(RoadRules.at(net, lat(0), lng(1401), 0.0, 30, 5.0, TravelMode.TRUCK, java.time.LocalTime.of(20, 15)).isNoEntry());
+    }
+
+    @Test
+    void readsOnlyPlainDailyBanHours() {
+        assertEquals("08:00-11:00", OsmRoadParser.hours("no @ (08:00-11:00)"));
+        assertEquals("07:00-10:00,16:00-20:00", OsmRoadParser.hours("no @ (07:00-10:00; 16:00-20:00)"));
+        assertNull(OsmRoadParser.hours("no @ (Mo-Fr 08:00-11:00)"), "day rules are ignored, never guessed");
+        assertNull(OsmRoadParser.hours("destination @ (08:00-11:00)"));
+        assertNull(OsmRoadParser.hours(null));
+    }
+
+    @Test
     void offTheMappedRoadsTheGeneralLimitApplies() throws Exception {
         RoadInfo r = RoadRules.at(network(), lat(250), lng(250), 0.0, 30, 5.0, TravelMode.CAR);
         assertFalse(r.isMapped());
@@ -169,15 +206,15 @@ class RoadRulesTest {
             assertTrue(q.contains("out tags geom"));
             return OsmFixture.json(); // every tile answers with the same roads - kept once each
         });
-        assertEquals(6, service.importNow());
+        assertEquals(9, service.importNow());
         assertEquals(16, calls.get(), "4 x 4 tiles");
-        assertEquals(6, repo.count());
+        assertEquals(9, repo.count());
         assertEquals("OK", statuses.findById(RoadDataService.SOURCE).orElseThrow().getState());
         assertTrue(service.loaded());
 
         RoadDataService fresh = new RoadDataService(repo, statuses);
         fresh.loadFromDatabase();
-        assertEquals(6, fresh.network().size(), "roads come back from the database after a restart");
+        assertEquals(9, fresh.network().size(), "roads come back from the database after a restart");
         assertEquals(70, fresh.roadAt(lat(3), lng(400), 90.0, 40, null, TravelMode.CAR).getLimitKmh());
     }
 
@@ -194,7 +231,7 @@ class RoadRulesTest {
         });
         assertEquals(-1, service.importNow());
         assertEquals("FAILED", statuses.findById(RoadDataService.SOURCE).orElseThrow().getState());
-        assertEquals(6, repo.count(), "old roads kept");
+        assertEquals(9, repo.count(), "old roads kept");
         assertTrue(service.loaded());
     }
 }

@@ -34,7 +34,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *
  * What is downloaded: every main road (national / state highways, main and
  * link roads, with their ramps), plus any smaller road the map gives a speed
- * limit or a one-way direction. The region is fetched in 16 tiles, one after
+ * limit, a one-way direction or a vehicle ban (pedestrian streets,
+ * "no motor vehicles", "no heavy vehicles", and timed bans). The region is fetched in 16 tiles, one after
  * another, from the first Overpass server that answers. If more than a
  * quarter of the tiles fail, the old roads are kept and the import is tried
  * again an hour later.
@@ -58,6 +59,8 @@ public class RoadDataService {
 
     private final RoadSegmentRepository repository;
     private final LiveDataStatusRepository statusRepository;
+    /** For fast multi-row inserts on the real database (absent in tests, which use the repository). */
+    private org.springframework.jdbc.core.JdbcTemplate jdbc;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private volatile RoadNetwork network = RoadNetwork.EMPTY;
     private volatile String lastOrigin;
@@ -84,6 +87,11 @@ public class RoadDataService {
         this.repository = repository;
         this.statusRepository = statusRepository;
         this.fetcher = this::overpass;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setJdbcTemplate(org.springframework.jdbc.core.JdbcTemplate jdbc) {
+        this.jdbc = jdbc;
     }
 
     /** For tests: answer queries from a fixture instead of the internet. */
@@ -205,8 +213,8 @@ public class RoadDataService {
             RoadNetwork fresh = new RoadNetwork(roads.values());
             network = fresh; // used at once, before saving
             save(new ArrayList<>(roads.values()));
-            String msg = String.format(Locale.ROOT, "%,d roads of the %s: %,d with a posted speed limit, %,d one-way%s",
-                    fresh.size(), regionName, fresh.withMaxspeed(), fresh.oneways(),
+            String msg = String.format(Locale.ROOT, "%,d roads of the %s: %,d with a posted speed limit, %,d one-way, %,d closed to some vehicles%s",
+                    fresh.size(), regionName, fresh.withMaxspeed(), fresh.oneways(), fresh.restricted(),
                     failed > 0 ? " (" + failed + " tiles missing, retried next week)" : "");
             status("OK", msg, (long) fresh.size(), true);
             log.info(msg);
@@ -224,10 +232,53 @@ public class RoadDataService {
         }
     }
 
+    private static final String[] COLUMNS = {"id", "name", "ref", "highway", "maxspeed_kmh", "maxspeed_forward_kmh",
+            "maxspeed_backward_kmh", "oneway", "cycles_both_ways", "divided", "lanes", "no_motor_vehicles", "no_motor_hours",
+            "no_heavy_vehicles", "no_heavy_hours", "geometry", "min_lat", "min_lng", "max_lat", "max_lng", "imported_at"};
+    /** Rows per INSERT statement: a remote database is reached once per 200 roads, not once per road. */
+    private static final int ROWS_PER_INSERT = 200;
+
     private void save(List<RoadSegment> rows) {
-        repository.deleteAllInBatch();
-        for (int i = 0; i < rows.size(); i += SAVE_CHUNK) {
-            repository.saveAll(rows.subList(i, Math.min(rows.size(), i + SAVE_CHUNK)));
+        if (jdbc == null) {
+            repository.deleteAllInBatch();
+            for (int i = 0; i < rows.size(); i += SAVE_CHUNK) {
+                repository.saveAll(rows.subList(i, Math.min(rows.size(), i + SAVE_CHUNK)));
+            }
+            return;
+        }
+        jdbc.update("DELETE FROM road_segments");
+        String cols = String.join(",", COLUMNS);
+        String one = "(" + String.join(",", java.util.Collections.nCopies(COLUMNS.length, "?")) + ")";
+        for (int i = 0; i < rows.size(); i += ROWS_PER_INSERT) {
+            List<RoadSegment> part = rows.subList(i, Math.min(rows.size(), i + ROWS_PER_INSERT));
+            String sql = "INSERT INTO road_segments (" + cols + ") VALUES "
+                    + String.join(",", java.util.Collections.nCopies(part.size(), one));
+            List<Object> args = new ArrayList<>(part.size() * COLUMNS.length);
+            for (RoadSegment r : part) {
+                args.add(r.getId());
+                args.add(r.getName());
+                args.add(r.getRef());
+                args.add(r.getHighway());
+                args.add(r.getMaxspeedKmh());
+                args.add(r.getMaxspeedForwardKmh());
+                args.add(r.getMaxspeedBackwardKmh());
+                args.add(r.getOneway() == null ? 0 : r.getOneway());
+                args.add(Boolean.TRUE.equals(r.getCyclesBothWays()));
+                args.add(Boolean.TRUE.equals(r.getDivided()));
+                args.add(r.getLanes());
+                args.add(Boolean.TRUE.equals(r.getNoMotorVehicles()));
+                args.add(r.getNoMotorHours());
+                args.add(Boolean.TRUE.equals(r.getNoHeavyVehicles()));
+                args.add(r.getNoHeavyHours());
+                args.add(r.getGeometry());
+                args.add(r.getMinLat());
+                args.add(r.getMinLng());
+                args.add(r.getMaxLat());
+                args.add(r.getMaxLng());
+                // Bound as a Timestamp, exactly as Hibernate binds a LocalDateTime, so both write the same time.
+                args.add(r.getImportedAt() == null ? null : java.sql.Timestamp.valueOf(r.getImportedAt()));
+            }
+            jdbc.update(sql, args.toArray());
         }
     }
 
@@ -262,6 +313,11 @@ public class RoadDataService {
                 + "way[\"highway\"~\"^(unclassified|residential|living_street|service|road)$\"][\"maxspeed\"]" + box + ";"
                 + "way[\"highway\"~\"^(unclassified|residential|living_street|service|road)$\"][\"oneway\"~\"^(yes|1|true|-1)$\"]" + box + ";"
                 + "way[\"highway\"~\"^(unclassified|residential|living_street|road)$\"][\"junction\"=\"roundabout\"]" + box + ";"
+                + "way[\"highway\"=\"pedestrian\"]" + box + ";"
+                + "way[\"highway\"~\"^(unclassified|residential|living_street|service|road)$\"][\"motor_vehicle\"=\"no\"]" + box + ";"
+                + "way[\"highway\"~\"^(unclassified|residential|living_street|service|road)$\"][\"access\"=\"no\"]" + box + ";"
+                + "way[\"highway\"~\"^(unclassified|residential|living_street|service|road)$\"][\"hgv\"=\"no\"]" + box + ";"
+                + "way[\"highway\"~\"^(unclassified|residential|living_street|service|road)$\"][~\"^(hgv|motor_vehicle|access):conditional$\"~\".\"]" + box + ";"
                 + ");out tags geom;";
     }
 

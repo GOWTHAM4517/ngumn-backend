@@ -339,7 +339,7 @@
     <div class="tab" id="tab-live">
       <div class="tiles" id="lTiles"><div class="empty">Loading…</div></div>
       <section><h2>Real roads of the region <span class="badge" id="lRoadState"></span></h2>
-        <div class="sub" style="margin:-4px 0 10px">Every speed limit and one-way road Raksio checks comes from OpenStreetMap, downloaded by the server and refreshed every Sunday. Where a road has no posted limit, the legal limit for the vehicle and road type applies (MoRTH S.O. 1522(E), 6 Apr 2018: car 70 / bike, bus, lorry 60 / auto 50 km/h in the city; car 100 on 4-lane divided roads), with the notification's 5% tolerance. Speed zones you add under Road rules override them.</div>
+        <div class="sub" style="margin:-4px 0 10px">Every speed limit and one-way road Raksio checks comes from OpenStreetMap, downloaded by the server and refreshed every Sunday. Where a road has no posted limit, the legal limit for the vehicle and road type applies (MoRTH S.O. 1522(E), 6 Apr 2018: car 70 / bike, bus, lorry 60 / auto 50 km/h in the city; car 100 on 4-lane divided roads), with the notification's 5% tolerance. Roads the map closes to vehicles (pedestrian streets, "no motor vehicles", "no heavy vehicles", timed bans) are checked as no-entry. Speed zones you add under Road rules override them.</div>
         <div id="lRoads"><div class="empty">Loading…</div></div>
         <div class="toolbar" style="margin-top:10px"><button class="secondary" id="lRoadsRefresh">Download the roads again now</button><span class="sub" id="lRoadsMsg"></span></div>
       </section>
@@ -558,7 +558,7 @@
     api('/api/admin/live-data').then(function (d) {
       var r = d.roads, t = d.ml.traffic, rt = d.ml.reportTrust;
       $('lTiles').innerHTML = [
-        tile(n(r.roads), 'real roads loaded'), tile(n(r.withPostedLimit), 'with posted limit'), tile(n(r.oneWay), 'one-way roads'),
+        tile(n(r.roads), 'real roads loaded'), tile(n(r.withPostedLimit), 'with posted limit'), tile(n(r.oneWay), 'one-way roads'), tile(n(r.restricted), 'roads closed to some vehicles'),
         tile(d.weather.towns.length, 'towns with live weather'), tile(d.jams.length, 'jams / slow roads now', true),
         tile(n(t.samples), 'speeds learned'), tile(n(rt.samples), 'reports learned from')
       ].join('');

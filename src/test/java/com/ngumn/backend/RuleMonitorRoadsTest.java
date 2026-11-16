@@ -148,6 +148,19 @@ class RuleMonitorRoadsTest {
     }
 
     @Test
+    void lorryOnARoadClosedToHeavyVehicles() {
+        Vehicle lorry = vehicle("Suresh", TravelMode.TRUCK, 801, 650);
+        drive(lorry, 801, 650, 801, 750, 25, 90);
+        drive(lorry, 801, 750, 801, 850, 25, 90);
+        assertTrue(of(lorry).stream().anyMatch(t -> t.getType() == ViolationType.NO_ENTRY
+                && t.getMessage().startsWith("No entry: Market Road - No heavy vehicles")), "" + of(lorry));
+        Vehicle car = vehicle("Ravi", TravelMode.CAR, 801, 650);
+        drive(car, 801, 650, 801, 750, 25, 90);
+        drive(car, 801, 750, 801, 850, 25, 90);
+        assertTrue(of(car).isEmpty(), "cars may use Market Road");
+    }
+
+    @Test
     void walkingIsNeverChecked() {
         Vehicle walker = vehicle("Anu", TravelMode.WALK, 401, 250);
         drive(walker, 401, 250, 401, 200, 25, 270);

@@ -24,7 +24,7 @@ import java.time.LocalDateTime;
  */
 @Entity
 @Table(name = "road_segments", indexes = {
-        @Index(name = "idx_road_segments_box", columnList = "minLat,minLng")
+        @Index(name = "idx_road_segments_box", columnList = "min_lat,min_lng")
 })
 @Data
 @NoArgsConstructor
@@ -73,14 +73,37 @@ public class RoadSegment implements Persistable<Long> {
 
     private Integer lanes;
 
+    /** Motor vehicles may not use this road (pedestrian street, motor_vehicle=no, access=no). */
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean noMotorVehicles = false;
+
+    /** If set, the motor-vehicle ban applies only in these hours, e.g. "08:00-11:00,17:00-21:00". */
+    @Column(length = 80)
+    private String noMotorHours;
+
+    /** Heavy goods vehicles may not use this road (hgv=no). */
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean noHeavyVehicles = false;
+
+    /** If set, the heavy-vehicle ban applies only in these hours. */
+    @Column(length = 80)
+    private String noHeavyHours;
+
+
     /** The road's shape: Google encoded polyline, precision 5 (about 1 m). */
     @Lob
     @Column(nullable = false, columnDefinition = "MEDIUMTEXT")
     private String geometry;
 
+    @Column(name = "min_lat")
     private Double minLat;
+    @Column(name = "min_lng")
     private Double minLng;
+    @Column(name = "max_lat")
     private Double maxLat;
+    @Column(name = "max_lng")
     private Double maxLng;
 
     private LocalDateTime importedAt;

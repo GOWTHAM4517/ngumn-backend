@@ -14,7 +14,7 @@ import java.time.LocalDateTime;
  * readings it has seen, their mean and spread (Welford's running variance).
  */
 @Entity
-@Table(name = "traffic_speed_stats", indexes = @Index(name = "idx_traffic_road", columnList = "roadId"))
+@Table(name = "traffic_speed_stats", indexes = @Index(name = "idx_traffic_road", columnList = "road_id"))
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
@@ -26,6 +26,7 @@ public class TrafficSpeedStat {
     @Column(length = 48)
     private String id;
 
+    @Column(name = "road_id")
     private Long roadId;
 
     /** 1 = the road's drawing direction, -1 = against it. */

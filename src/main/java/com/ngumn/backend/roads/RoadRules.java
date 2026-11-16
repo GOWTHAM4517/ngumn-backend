@@ -16,6 +16,11 @@ import java.util.List;
  * are separate one-way roads ~15 m apart) and off a side street it is only
  * passing.
  *
+ * No entry: on a road closed to this vehicle (OSM: pedestrian street,
+ * motor_vehicle / access = no, hgv = no for lorries, and timed bans such as
+ * "no @ (08:00-11:00)") - only while moving, and only when no road this
+ * vehicle may use is nearly as close.
+ *
  * Wrong way: only when the nearest road within 12 m is one-way, the heading
  * is at least 150 degrees off its direction, the vehicle is moving, and no
  * road nearly as close (within 8 m more) allows the direction it is going. The rule monitor also
@@ -40,6 +45,12 @@ public final class RoadRules {
      */
     public static RoadInfo at(RoadNetwork net, double lat, double lng, Double heading, double speedKmh,
                               Double accuracyMeters, TravelMode mode) {
+        return at(net, lat, lng, heading, speedKmh, accuracyMeters, mode, java.time.LocalTime.now());
+    }
+
+    /** As above, at a given time of day (timed vehicle bans). */
+    public static RoadInfo at(RoadNetwork net, double lat, double lng, Double heading, double speedKmh,
+                              Double accuracyMeters, TravelMode mode, java.time.LocalTime now) {
         if (mode == null) mode = TravelMode.CAR;
         boolean cycling = mode == TravelMode.CYCLE;
         double extra = accuracyMeters == null ? 0 : Math.max(0, Math.min(10, accuracyMeters - 5));
@@ -51,6 +62,7 @@ public final class RoadRules {
             if (h.distanceMeters > MATCH_METERS + extra) continue;
             double score = h.distanceMeters;
             if (heading != null && speedKmh >= MOVING_KMH && h.mismatch(heading, cycling) > 45) score += 30;
+            if (h.banFor(mode, now) != null) score += 30; // prefer a road this vehicle may use
             if (score < bestScore) {
                 bestScore = score;
                 best = h;
@@ -77,6 +89,27 @@ public final class RoadRules {
                 }
                 wrongWay = !someRoadAllows;
                 if (wrongWay) best = nearest;
+            }
+        }
+
+        // No entry: on a road closed to this vehicle (pedestrian street, a vehicle ban,
+        // a timed ban now in force) - only when moving, and only when no road this
+        // vehicle may use is nearly as close (a main road beside a pedestrian lane).
+        boolean noEntry = false;
+        if (speedKmh >= MOVING_KMH && mode.motorised() && !hits.isEmpty()) {
+            RoadNetwork.Hit nearest = hits.get(0);
+            if (nearest.distanceMeters <= WRONG_WAY_METERS && nearest.banFor(mode, now) != null) {
+                boolean allowedNear = false;
+                for (RoadNetwork.Hit h : hits) {
+                    if (h.distanceMeters <= nearest.distanceMeters + ALLOW_MARGIN_METERS && h.banFor(mode, now) == null) {
+                        allowedNear = true;
+                        break;
+                    }
+                }
+                if (!allowedNear) {
+                    noEntry = true;
+                    best = nearest;
+                }
             }
         }
 
@@ -109,6 +142,8 @@ public final class RoadRules {
                 .overAtKmh(limit == null ? null : round1(SpeedLimitLaw.threshold(limit)))
                 .oneway(s.getOneway() != null && s.getOneway() != 0)
                 .wrongWay(wrongWay)
+                .noEntry(noEntry)
+                .restriction(best.banFor(mode, now))
                 .forward(heading == null || best.forward(heading))
                 .distanceMeters(round1(best.distanceMeters))
                 .build();

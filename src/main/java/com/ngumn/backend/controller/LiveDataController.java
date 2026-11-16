@@ -108,6 +108,7 @@ public class LiveDataController {
         r.put("roads", roads.network().size());
         r.put("withPostedLimit", roads.network().withMaxspeed());
         r.put("oneWay", roads.network().oneways());
+        r.put("restricted", roads.network().restricted());
         r.put("importing", roads.importing());
         r.put("status", status(roads.status()));
         r.put("law", "Limits not posted on the map follow MoRTH S.O. 1522(E), 6 Apr 2018 (5% tolerance)");

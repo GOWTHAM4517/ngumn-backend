@@ -48,6 +48,10 @@ import java.util.concurrent.ConcurrentHashMap;
  * approaching"), a calmer note for the rest of the people within their
  * chosen radius ("Rule broken nearby ...").
  *
+ * Real roads (RoadDataService, from OpenStreetMap) also give no-entry
+ * rules: a pedestrian street, "no motor vehicles", "no heavy vehicles"
+ * (lorries) and timed bans, checked like the zones.
+ *
  * Real roads (RoadDataService, from OpenStreetMap): outside the admin's
  * zones, the limit is the road's own - its posted limit on the map, or the
  * legal limit for the vehicle class and road type from MoRTH S.O. 1522(E)
@@ -308,6 +312,27 @@ public class RuleMonitorService {
                     .speedKmh(Math.round(speed * 10) / 10.0)
                     .headingDegrees(heading)
                     .zoneName(noEntry.getName())
+                    .simulated(false)
+                    .build(), true);
+            nearbyDangerService.warnAboutViolation(vehicle, ViolationType.NO_ENTRY, speed, heading);
+        }
+
+        // 3b. A real road closed to this vehicle (OpenStreetMap: pedestrian street,
+        //     no motor vehicles, no heavy vehicles, timed bans).
+        boolean roadNoEntry = noEntry == null && moving && road != null && road.isNoEntry();
+        if (sustained(vid + ":roadnoentry", roadNoEntry, now) && road != null) {
+            String why = road.getRestriction() != null ? road.getRestriction() : "closed to your vehicle";
+            trafficRuleService.record(TrafficViolation.builder()
+                    .vehicle(vehicle)
+                    .driver(vehicle.getOwner())
+                    .type(ViolationType.NO_ENTRY)
+                    .source(ViolationSource.MONITOR)
+                    .latitude(lat)
+                    .longitude(lng)
+                    .speedKmh(Math.round(speed * 10) / 10.0)
+                    .headingDegrees(heading)
+                    .zoneName(road.getName())
+                    .message("No entry: " + road.getName() + " - " + why + ". Leave the way you came in.")
                     .simulated(false)
                     .build(), true);
             nearbyDangerService.warnAboutViolation(vehicle, ViolationType.NO_ENTRY, speed, heading);
