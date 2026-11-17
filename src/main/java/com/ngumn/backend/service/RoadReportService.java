@@ -93,8 +93,8 @@ public class RoadReportService {
 
     /**
      * The report already on the road for the same thing at this spot (within
-     * that kind's same-spot distance), the nearest one - or null. Demo Mode's
-     * sample reports and real ones are never mixed.
+     * that kind's same-spot distance), the nearest one - or null. Old sample
+     * reports (from the removed Demo Mode) and real ones are never mixed.
      */
     RoadReport sameSpot(User reporter, ReportType type, String description, Double lat, Double lng) {
         if (type == null || lat == null || lng == null) return null;
@@ -115,7 +115,7 @@ public class RoadReportService {
         return nearest;
     }
 
-    /** Demo Mode's sample person. */
+    /** The old sample person from the removed Demo Mode (LegacyDemoCleanup deactivates it). */
     private static boolean isSample(User u) {
         return u != null && com.ngumn.backend.live.LegacyDemoCleanup.DEMO_USER_EMAIL.equals(u.getEmail());
     }

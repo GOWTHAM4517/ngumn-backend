@@ -121,7 +121,7 @@ public enum ReportKind {
      * description matches anything of that kind).
      */
     public static boolean sameThing(ReportType typeA, String descriptionA, ReportType typeB, String descriptionB) {
-        // Demo Mode's sample reports and real ones are never the same thing.
+        // Old sample reports (left from the removed Demo Mode) and real ones are never the same thing.
         if (isSample(descriptionA) != isSample(descriptionB)) return false;
         ReportKind a = of(typeA, descriptionA);
         if (a != of(typeB, descriptionB)) return false;
@@ -130,7 +130,7 @@ public enum ReportKind {
         return da.isEmpty() || db.isEmpty() || da.equals(db);
     }
 
-    /** Demo Mode's sample reports say so ("(Sample report - not a real hazard)" - see DemoSimulatorService). */
+    /** Old sample reports from the removed Demo Mode start with "(Sample report"; LegacyDemoCleanup ends them on start. */
     public static boolean isSample(String description) {
         return description != null && description.trim().toLowerCase(Locale.ROOT).startsWith("(sample report");
     }

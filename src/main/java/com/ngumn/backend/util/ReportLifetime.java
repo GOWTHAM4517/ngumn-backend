@@ -28,7 +28,7 @@ public final class ReportLifetime {
     private ReportLifetime() {
     }
 
-    /** Demo Mode's sample reports clear within this, whatever they are. */
+    /** Old sample reports (from the removed Demo Mode) clear within this, whatever they are. */
     public static final Duration SAMPLE = Duration.ofHours(2);
 
     public static Duration of(ReportType type, String description) {

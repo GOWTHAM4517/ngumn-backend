@@ -48,7 +48,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * behind, left, right - or a compass direction if they're parked). Each
  * person hears a warning about the same vehicle at most once every 3
  * minutes, and the calmer note at most once every 10. Only real vehicles
- * are involved: never Demo Mode's simulated traffic, and only people whose
+ * are involved: never old sample vehicles, and only people whose
  * location is from the last 3 minutes are told.
  *
  * The app shows these alerts as heads-up banners with a spoken warning

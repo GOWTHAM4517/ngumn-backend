@@ -15,8 +15,8 @@ import java.time.LocalDateTime;
  * road users confirmed.
  *
  * This is a safety record in a prototype - not an e-challan, and it
- * carries no legal weight. "simulated" marks Test Drive and Demo Mode
- * records, which are kept apart from real ones.
+ * carries no legal weight. "simulated" marks old test records (from the
+ * removed Test Drive and Demo Mode), which are kept apart from real ones.
  */
 @Entity
 @Table(name = "traffic_violations")
